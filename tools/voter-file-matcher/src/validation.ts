@@ -74,6 +74,10 @@ export type ValidateDbResult = {
   /** Objects from optional migration 006 (confidence %, initiative rollups). */
   migration_006_objects?: Record<string, boolean>;
   migration_006_ok?: boolean;
+  /** Objects from optional migration 007 (review queue 80, nonvoters, candidate snapshots). */
+  migration_007_objects?: Record<string, boolean>;
+  migration_007_ok?: boolean;
+  migration_007_notes?: string[];
 };
 
 function requiredHeaderFieldsForMap(map: VoterHeaderMapFile): readonly string[] {
@@ -218,6 +222,8 @@ export async function runValidateDb(mapPath: string): Promise<ValidateDbResult> 
       migration_005_ok: false,
       migration_006_objects: {},
       migration_006_ok: false,
+      migration_007_objects: {},
+      migration_007_ok: false,
     };
   }
 
@@ -234,6 +240,8 @@ export async function runValidateDb(mapPath: string): Promise<ValidateDbResult> 
       migration_005_ok: false,
       migration_006_objects: {},
       migration_006_ok: false,
+      migration_007_objects: {},
+      migration_007_ok: false,
     };
   }
 
@@ -253,6 +261,8 @@ export async function runValidateDb(mapPath: string): Promise<ValidateDbResult> 
       migration_005_ok: false,
       migration_006_objects: {},
       migration_006_ok: false,
+      migration_007_objects: {},
+      migration_007_ok: false,
     };
   }
 
@@ -510,6 +520,66 @@ export async function runValidateDb(mapPath: string): Promise<ValidateDbResult> 
 
     plan_migration_notes.push(...migration_006_notes);
 
+    const migration_007_objects: Record<string, boolean> = {};
+    let migration_007_ok = false;
+    const migration_007_notes: string[] = [];
+    const mark007 = async (table: string, column: string, key: string) => {
+      const r = await dbPool.query<{ e: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+         ) AS e`,
+        [table, column]
+      );
+      migration_007_objects[key] = Boolean(r.rows[0]?.e);
+    };
+    await mark007("petitions", "review_confidence_threshold", "column:petitions.review_confidence_threshold");
+    await mark007("petitions", "jurisdiction_city", "column:petitions.jurisdiction_city");
+    await mark007("import_voter_matches", "is_in_review_queue", "column:import_voter_matches.is_in_review_queue");
+    await mark007("import_voter_matches", "jurisdiction_status", "column:import_voter_matches.jurisdiction_status");
+    await mark007("voter_petition_signatures", "jurisdiction_status", "column:voter_petition_signatures.jurisdiction_status");
+    for (const t of ["initiative_nonvoter_entries", "review_candidate_snapshots"] as const) {
+      const tr = await dbPool.query<{ e: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM information_schema.tables
+           WHERE table_schema = 'public' AND table_name = $1
+         ) AS e`,
+        [t]
+      );
+      migration_007_objects[`table:${t}`] = Boolean(tr.rows[0]?.e);
+    }
+    for (const v of ["initiative_review_queue_80", "initiative_nonvoter_summary", "initiative_duplicate_summary"] as const) {
+      const vr = await dbPool.query<{ e: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM information_schema.views
+           WHERE table_schema = 'public' AND table_name = $1
+         ) AS e`,
+        [v]
+      );
+      migration_007_objects[`view:${v}`] = Boolean(vr.rows[0]?.e);
+    }
+    migration_007_ok = Object.values(migration_007_objects).every(Boolean);
+    if (tables001Ok && migration_002_ok && !migration_007_ok) {
+      migration_007_notes.push(
+        "Migration 007_review_candidates_jurisdiction_nonvoters.sql is missing or incomplete. Review-candidate snapshots, nonvoter entries, and initiative_review_queue_80 will not be available until it is applied."
+      );
+    }
+    if (migration_007_ok) {
+      const cityInit = await dbPool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c FROM petitions p
+         WHERE (p.initiative_scope = 'CITY' OR p.jurisdiction_type = 'CITY')
+           AND (p.jurisdiction_city IS NULL OR btrim(p.jurisdiction_city) = ''
+             OR p.jurisdiction_state IS NULL OR btrim(p.jurisdiction_state) = '')`
+      );
+      const n = Number.parseInt(cityInit.rows[0]?.c ?? "0", 10);
+      if (n > 0) {
+        migration_007_notes.push(
+          `${n} CITY-scoped initiative(s) lack jurisdiction_city/state; imports may require --confirm-missing-jurisdiction until fields are set via --upsert-initiative.`
+        );
+      }
+    }
+    plan_migration_notes.push(...migration_007_notes);
+
     const tablesOk = MIGRATION_TABLES.every((t) => migration_tables[t]);
     const canonicalOk = !ct || (canonical_table_reachable && canonical_columns_ok === true);
     const matchOk = !ms || match_source_columns_ok === true;
@@ -537,6 +607,9 @@ export async function runValidateDb(mapPath: string): Promise<ValidateDbResult> 
       migration_005_ok,
       migration_006_objects,
       migration_006_ok,
+      migration_007_objects,
+      migration_007_ok,
+      migration_007_notes: migration_007_notes.length ? migration_007_notes : undefined,
     };
   } finally {
     await pool?.end().catch(() => undefined);

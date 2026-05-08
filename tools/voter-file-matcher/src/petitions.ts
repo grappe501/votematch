@@ -50,6 +50,8 @@ export async function upsertPetitionSignature(
     voterPrecinct?: string | null;
     voterDistrict?: string | null;
     matchConfidencePct?: number | null;
+    jurisdictionStatus?: string | null;
+    duplicateStatus?: string | null;
   }
 ): Promise<{ signatureId: string; existedBefore: boolean }> {
   const prior = await client.query<{ id: string }>(
@@ -71,6 +73,7 @@ export async function upsertPetitionSignature(
       match_method, match_confidence,
       voter_ward, voter_precinct, voter_district,
       match_confidence_pct,
+      jurisdiction_status, duplicate_status,
       updated_at
     ) VALUES (
       $1, $2::uuid, $3,
@@ -82,7 +85,7 @@ export async function upsertPetitionSignature(
       $18::jsonb, $19::jsonb,
       $20, $21,
       $22, $23, $24,
-      $25,
+      $25, $26, $27,
       now()
     )
     ON CONFLICT (voter_id, petition_id) DO UPDATE SET
@@ -108,6 +111,8 @@ export async function upsertPetitionSignature(
       voter_precinct = COALESCE(EXCLUDED.voter_precinct, voter_petition_signatures.voter_precinct),
       voter_district = COALESCE(EXCLUDED.voter_district, voter_petition_signatures.voter_district),
       match_confidence_pct = COALESCE(EXCLUDED.match_confidence_pct, voter_petition_signatures.match_confidence_pct),
+      jurisdiction_status = COALESCE(EXCLUDED.jurisdiction_status, voter_petition_signatures.jurisdiction_status),
+      duplicate_status = COALESCE(EXCLUDED.duplicate_status, voter_petition_signatures.duplicate_status),
       updated_at = now()
     RETURNING id`,
     [
@@ -136,6 +141,8 @@ export async function upsertPetitionSignature(
       params.voterPrecinct ?? null,
       params.voterDistrict ?? null,
       params.matchConfidencePct ?? null,
+      params.jurisdictionStatus ?? null,
+      params.duplicateStatus ?? null,
     ]
   );
   return { signatureId: ins.rows[0]!.id, existedBefore };

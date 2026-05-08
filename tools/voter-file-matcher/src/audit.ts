@@ -16,7 +16,8 @@ export type ImportReviewAction =
   | "ADD_NOTE"
   | "ATTACH_SIGNATURE"
   | "DETACH_SIGNATURE_REQUESTED"
-  | "SUPERSEDE_REVIEW";
+  | "SUPERSEDE_REVIEW"
+  | "PLACE_NONVOTER";
 
 export async function insertSignatureEvent(
   client: PoolClient,

@@ -74,6 +74,11 @@ export {
   runNeedsMoreInfo,
   runAddReviewNote,
   runReviewProgress,
+  runReviewNextUnderThreshold,
+  runMoreReviewCandidates,
+  runSelectReviewCandidate,
+  runPlaceNonvoter,
+  runNonvoterReport,
 } from "./review.js";
 export type { ReviewQueueRow, BatchSummaryJson } from "./review.js";
 export {
@@ -126,11 +131,12 @@ export {
   matchPetitionMailOnMatchSource,
   assertVoterExistsInMatchSourceOrCanonical,
   fetchVoterGeoForVoterId,
+  fetchVoterLocationSnapshot,
   computeProjectedMatchingQuality,
   evaluateMatchReadiness,
   evaluateCandidateProbe,
 } from "./matchSource.js";
-export type { VoterGeoSnapshot } from "./matchSource.js";
+export type { VoterGeoSnapshot, VoterLocationSnapshot } from "./matchSource.js";
 export type { MatchReadinessResult } from "./matchSource.js";
 export { computeFileSha256, getFileSizeBytes, shortHash } from "./fileHash.js";
 export { runFullImport } from "./importRunner.js";
@@ -163,6 +169,25 @@ export {
   importPlansTableExists,
 } from "./importPlan.js";
 export { discoverVoterSchema, fetchTableColumnsMetadata, classifyColumnName, listPublicTables } from "./schemaDiscovery.js";
+export {
+  evaluateJurisdictionStatus,
+  evaluateSignerJurisdictionStatus,
+  zip5Equal,
+} from "./jurisdiction.js";
+export type { JurisdictionPetitionContext, JurisdictionLocationInput, JurisdictionStatusResult } from "./jurisdiction.js";
+export { rankCandidatesForRow } from "./candidateRanking.js";
+export type { RankedCandidate } from "./candidateRanking.js";
+export {
+  initiativeReviewQueue80ViewExists,
+  fetchNextInitiativeReviewQueue80,
+  jurisdictionContextFromQueueRow,
+  buildRankedReviewCandidates,
+  replaceReviewCandidateSnapshots,
+  fetchSnapshotsForRowPage,
+} from "./reviewQueue80.js";
+export type { InitiativeReviewQueue80Row } from "./reviewQueue80.js";
+export { insertInitiativeNonvoterEntry, fetchNonvoterEntriesForPetition } from "./nonvoters.js";
+export type { NonvoterReason, NonvoterReportRow } from "./nonvoters.js";
 export { buildMatchSourcePlan, planFromDiscovery } from "./matchSourcePlanner.js";
 export {
   emitMatchSourceViewSql,

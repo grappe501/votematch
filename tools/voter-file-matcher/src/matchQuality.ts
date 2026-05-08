@@ -11,6 +11,21 @@ export const SEVERE_QA_FLAGS_FOR_SLAM: ReadonlySet<QaFlag> = new Set([
   "FUTURE_SIGNED_AT",
 ]);
 
+/** Identity QA that forces operator review (matches initiative_review_queue_80 SQL). */
+export const SEVERE_QA_FLAGS_FOR_REVIEW_QUEUE: ReadonlySet<QaFlag> = new Set([
+  "MISSING_FIRST_NAME",
+  "MISSING_LAST_NAME",
+  "MISSING_ADDRESS",
+  "INVALID_BIRTH_DATE",
+  "INVALID_BIRTH_YEAR",
+  "INVALID_ZIP",
+]);
+
+export function hasSevereQaForReviewQueue(normalized: NormalizedRowJson): boolean {
+  const flags = Array.isArray(normalized._qa_flags) ? normalized._qa_flags : [];
+  return flags.some((f) => SEVERE_QA_FLAGS_FOR_REVIEW_QUEUE.has(f));
+}
+
 export function isWeakMatchMethod(matchMethod: string | null | undefined): boolean {
   const m = (matchMethod ?? "").toLowerCase();
   return m.includes("weak") || m.includes("tier5");

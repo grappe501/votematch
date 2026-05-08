@@ -8,11 +8,23 @@ import {
   fetchVoterGeoForVoterId,
   readMatchSourceTableEnv,
 } from "./matchSource.js";
+import type { JurisdictionPetitionContext } from "./jurisdiction.js";
 import { isSlamDunkMatch, rowNeedsOperatorQueue, rowNeedsReviewByOutcome } from "./matchQuality.js";
 import { manualApprovalConfidencePct } from "./confidence.js";
 import { loadBatchSignatureReportRows } from "./reporting.js";
 import { upsertPetitionSignature } from "./petitions.js";
 import { toTitleCaseFromLower } from "./normalize.js";
+import type { RankedCandidate } from "./candidateRanking.js";
+import {
+  buildRankedReviewCandidates,
+  fetchNextInitiativeReviewQueue80,
+  fetchSnapshotsForRowPage,
+  jurisdictionContextFromQueueRow,
+  replaceReviewCandidateSnapshots,
+  type InitiativeReviewQueue80Row,
+} from "./reviewQueue80.js";
+import { fetchNonvoterEntriesForPetition, insertInitiativeNonvoterEntry, type NonvoterReportRow } from "./nonvoters.js";
+import { escapeCsvCell } from "./reports.js";
 
 const DEFAULT_REVIEW_QUEUE_STATUSES = ["MULTIPLE_MATCHES", "WEAK_MATCH", "NOT_FOUND", "ERROR"] as const;
 
@@ -277,6 +289,8 @@ async function getLatestMatchForRow(
   matchMethod: string | null;
   matchConfidence: string | number | null;
   qaFlags: unknown;
+  candidatePage: number;
+  candidateSearchOffset: number;
 } | null> {
   const r = await client.query<{
     match_id: string;
@@ -289,10 +303,13 @@ async function getLatestMatchForRow(
     match_method: string | null;
     match_confidence: string | null;
     qa_flags: unknown;
+    candidate_page: string | number | null;
+    candidate_search_offset: string | number | null;
   }>(
     `SELECT mr.id AS match_id, ir.id AS import_row_id, mr.match_status, mr.review_status, mr.resolved_voter_id, mr.voter_id,
             mr.candidate_count::text, mr.match_method, mr.match_confidence::text,
-            COALESCE(ir.normalized_json->'_qa_flags', '[]'::jsonb) AS qa_flags
+            COALESCE(ir.normalized_json->'_qa_flags', '[]'::jsonb) AS qa_flags,
+            mr.candidate_page::text, mr.candidate_search_offset::text
      FROM import_rows ir
      INNER JOIN import_voter_matches mr ON mr.import_row_id = ir.id
      WHERE ir.import_batch_id = $1::uuid AND ir.row_number = $2
@@ -313,6 +330,8 @@ async function getLatestMatchForRow(
     matchMethod: x.match_method,
     matchConfidence: x.match_confidence,
     qaFlags: x.qa_flags,
+    candidatePage: Number.parseInt(String(x.candidate_page ?? 0), 10) || 0,
+    candidateSearchOffset: Number.parseInt(String(x.candidate_search_offset ?? 0), 10) || 0,
   };
 }
 
@@ -326,6 +345,12 @@ export async function runApproveRow(
     note: string;
     canonicalTableQualified: string;
     cols: CanonicalColumnMap;
+    /** When true, allows manual attach even for rows that would normally be blocked (e.g. review-candidate selection). */
+    operatorOverride?: boolean;
+    /** When selecting a review candidate that is outside the initiative jurisdiction, pass true to attach anyway. */
+    allowOutOfJurisdictionAttach?: boolean;
+    /** Jurisdiction classification for the selected voter (from review_candidate_snapshots or operator). */
+    jurisdictionStatusFromSelection?: string | null;
   }
 ): Promise<{ summary: Record<string, unknown> }> {
   const vid = opts.voterId.trim();
@@ -397,6 +422,7 @@ export async function runApproveRow(
       qa_flags: matchInfo.qaFlags,
     });
     const allowManual =
+      opts.operatorOverride === true ||
       ["MULTIPLE_MATCHES", "WEAK_MATCH", "NOT_FOUND", "ERROR"].includes(matchInfo.matchStatus) ||
       (matchInfo.matchStatus === "MATCHED" && (!slam || matchInfo.reviewStatus === "NEEDS_MORE_INFO"));
     if (!allowManual) {
@@ -410,6 +436,55 @@ export async function runApproveRow(
       canonicalTableQualified: opts.canonicalTableQualified,
       cols: opts.cols,
     });
+
+    const jSel = (opts.jurisdictionStatusFromSelection ?? "").trim();
+    if (jSel === "OUT_OF_JURISDICTION" && opts.allowOutOfJurisdictionAttach !== true) {
+      const noteOut =
+        opts.note?.trim() ||
+        "Selected voter is outside the initiative jurisdiction; no signature attached.";
+      await c.query(
+        `UPDATE import_voter_matches
+         SET review_status = 'NEEDS_MORE_INFO',
+             reviewed_at = now(),
+             reviewed_by = $2,
+             resolution_note = $3,
+             jurisdiction_status = 'OUT_OF_JURISDICTION',
+             metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb
+         WHERE id = $1::uuid`,
+        [
+          matchInfo.matchId,
+          opts.reviewedBy,
+          noteOut,
+          JSON.stringify({ out_of_jurisdiction_review: true, attempted_voter_id: vid }),
+        ]
+      );
+      await insertImportMatchReview(c, {
+        importBatchId: opts.batchId,
+        importRowId: importRow.id,
+        importVoterMatchId: matchInfo.matchId,
+        action: "MARK_NEEDS_MORE_INFO",
+        previousMatchStatus: matchInfo.matchStatus,
+        previousReviewStatus: matchInfo.reviewStatus,
+        selectedVoterId: vid,
+        selectedPetitionId: b.petition_id,
+        selectedPetitionCode: b.petition_code,
+        reviewedBy: opts.reviewedBy,
+        reviewNote: noteOut,
+        metadata: { reason: "OUT_OF_JURISDICTION_ATTACH_BLOCKED" },
+      });
+      await c.query("COMMIT");
+      return {
+        summary: {
+          ok: true,
+          blocked: "OUT_OF_JURISDICTION",
+          batch_id: opts.batchId,
+          row_number: opts.rowNumber,
+          voter_id: vid,
+          import_voter_match_id: matchInfo.matchId,
+          review_status: "NEEDS_MORE_INFO",
+        },
+      };
+    }
 
     const petitionCode = b.petition_code ?? "";
     if (!petitionCode) {
@@ -432,6 +507,12 @@ export async function runApproveRow(
     }
 
     const manualPct = manualApprovalConfidencePct();
+    const sigJurisdiction =
+      jSel === "OUT_OF_JURISDICTION" && opts.allowOutOfJurisdictionAttach === true
+        ? "OUT_OF_JURISDICTION"
+        : jSel === "IN_JURISDICTION" || jSel === "UNKNOWN_JURISDICTION" || jSel === "NOT_CHECKED"
+          ? jSel
+          : "IN_JURISDICTION";
     const { signatureId, existedBefore } = await upsertPetitionSignature(c, {
       voterId: vid,
       petitionId: b.petition_id,
@@ -458,6 +539,8 @@ export async function runApproveRow(
       voterPrecinct,
       voterDistrict,
       matchConfidencePct: manualPct,
+      jurisdictionStatus: sigJurisdiction,
+      duplicateStatus: "NOT_DUPLICATE",
     });
 
     await c.query(
@@ -469,6 +552,9 @@ export async function runApproveRow(
            resolution_note = $4,
            voter_id = COALESCE(voter_id, $3),
            match_confidence_pct = $5,
+           jurisdiction_status = COALESCE($7, jurisdiction_status),
+           duplicate_status = COALESCE($8, duplicate_status),
+           is_in_review_queue = false,
            metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb
        WHERE id = $1::uuid`,
       [
@@ -478,6 +564,8 @@ export async function runApproveRow(
         opts.note,
         manualPct,
         JSON.stringify({ manual_resolution: true, manual_match_confidence_pct: manualPct }),
+        sigJurisdiction,
+        "NOT_DUPLICATE",
       ]
     );
 
@@ -752,13 +840,6 @@ export async function runAddReviewNote(
   }
 }
 
-function escapeCsvCell(v: string): string {
-  if (v.includes('"') || v.includes(",") || v.includes("\n") || v.includes("\r")) {
-    return `"${v.replace(/"/g, '""')}"`;
-  }
-  return v;
-}
-
 export async function exportReviewQueueCsv(
   pool: Pool,
   opts: { batchId: string; matchStatuses: string[]; outPath: string }
@@ -816,6 +897,405 @@ export async function exportReviewQueueCsv(
 
   await writeFile(opts.outPath, lines.join("\n") + "\n", "utf8");
   return opts.outPath;
+}
+
+export async function runReviewNextUnderThreshold(
+  pool: Pool,
+  opts: {
+    batchId: string;
+    canonicalTableQualified: string;
+    cols: CanonicalColumnMap;
+    searchPoolLimit?: number;
+  }
+): Promise<{
+  queue_row: InitiativeReviewQueue80Row | null;
+  candidates: RankedCandidate[];
+  commands: Record<string, string>;
+}> {
+  const next = await fetchNextInitiativeReviewQueue80(pool, opts.batchId);
+  if (!next) {
+    return {
+      queue_row: null,
+      candidates: [],
+      commands: {},
+    };
+  }
+  const petition = jurisdictionContextFromQueueRow(next);
+  const ranked = await buildRankedReviewCandidates(pool, {
+    batchId: opts.batchId,
+    rowNumber: next.row_number,
+    normalized: next.normalized_json,
+    petition,
+    canonicalTableQualified: opts.canonicalTableQualified,
+    cols: opts.cols,
+    searchPoolLimit: opts.searchPoolLimit ?? 120,
+    offset: 0,
+    pageSize: 5,
+  });
+  const conn = await pool.connect();
+  try {
+    await conn.query("BEGIN");
+    await conn.query(
+      `UPDATE import_voter_matches
+       SET candidate_page = 0, candidate_search_offset = 0
+       WHERE id = $1::uuid`,
+      [next.import_voter_match_id]
+    );
+    await replaceReviewCandidateSnapshots(conn, {
+      importBatchId: next.import_batch_id,
+      importRowId: next.import_row_id,
+      importVoterMatchId: next.import_voter_match_id,
+      candidatePage: 0,
+      ranked,
+    });
+    await conn.query("COMMIT");
+  } catch (e) {
+    try {
+      await conn.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  } finally {
+    conn.release();
+  }
+  const bid = opts.batchId;
+  const rn = next.row_number;
+  return {
+    queue_row: next,
+    candidates: ranked,
+    commands: {
+      select: `npm run voter-match -- --select-review-candidate --batch-id ${bid} --row-number ${rn} --candidate-number 1 --reviewed-by "Admin" --note "Selected from top 5"`,
+      more: `npm run voter-match -- --more-review-candidates --batch-id ${bid} --row-number ${rn}`,
+      nonvoter: `npm run voter-match -- --place-nonvoter --batch-id ${bid} --row-number ${rn} --reviewed-by "Admin" --note "No voter found"`,
+      skip: `npm run voter-match -- --skip-review-row --batch-id ${bid} --row-number ${rn} --reviewed-by "Admin" --note "Needs more info"`,
+      reject: `npm run voter-match -- --reject-review-row --batch-id ${bid} --row-number ${rn} --reviewed-by "Admin" --note "Reject row"`,
+    },
+  };
+}
+
+export async function runMoreReviewCandidates(
+  pool: Pool,
+  opts: {
+    batchId: string;
+    rowNumber: number;
+    canonicalTableQualified: string;
+    cols: CanonicalColumnMap;
+    pageSize?: number;
+    searchPoolLimit?: number;
+  }
+): Promise<{ candidate_page: number; candidate_search_offset: number; candidates: RankedCandidate[] }> {
+  const pageSize = opts.pageSize != null && opts.pageSize > 0 ? opts.pageSize : 5;
+  const conn = await pool.connect();
+  let matchId = "";
+  let importRowId = "";
+  let newPage = 0;
+  let newOff = 0;
+  let normalized: NormalizedRowJson = {};
+  let petition: JurisdictionPetitionContext = {};
+  try {
+    await conn.query("BEGIN");
+    const m = await getLatestMatchForRow(conn, opts.batchId, opts.rowNumber);
+    if (!m) throw new Error(`No import_voter_matches row for batch ${opts.batchId} row_number ${opts.rowNumber}`);
+    matchId = m.matchId;
+    importRowId = m.importRowId;
+    newPage = m.candidatePage + 1;
+    newOff = m.candidateSearchOffset + pageSize;
+    const row = await conn.query<{ normalized_json: NormalizedRowJson }>(
+      `SELECT normalized_json FROM import_rows WHERE id = $1::uuid`,
+      [importRowId]
+    );
+    normalized = row.rows[0]?.normalized_json ?? {};
+    const b = await conn.query<{ petition_code: string | null }>(
+      `SELECT petition_code FROM import_batches WHERE id = $1::uuid`,
+      [opts.batchId]
+    );
+    const petitionCode = b.rows[0]?.petition_code ?? null;
+    const pet = await conn.query<{
+      initiative_scope: string | null;
+      jurisdiction_type: string | null;
+      jurisdiction_city: string | null;
+      jurisdiction_county: string | null;
+      jurisdiction_state: string | null;
+    }>(
+      `SELECT initiative_scope, jurisdiction_type, jurisdiction_city, jurisdiction_county, jurisdiction_state
+       FROM petitions WHERE petition_code = $1`,
+      [petitionCode ?? ""]
+    );
+    const p = pet.rows[0];
+    petition = {
+      initiative_scope: p?.initiative_scope ?? null,
+      jurisdiction_type: p?.jurisdiction_type ?? null,
+      jurisdiction_city: p?.jurisdiction_city ?? null,
+      jurisdiction_county: p?.jurisdiction_county ?? null,
+      jurisdiction_state: p?.jurisdiction_state ?? null,
+    };
+    await conn.query(
+      `UPDATE import_voter_matches
+       SET candidate_page = $2, candidate_search_offset = $3
+       WHERE id = $1::uuid`,
+      [matchId, newPage, newOff]
+    );
+    await conn.query("COMMIT");
+  } catch (e) {
+    try {
+      await conn.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  } finally {
+    conn.release();
+  }
+
+  const ranked = await buildRankedReviewCandidates(pool, {
+    batchId: opts.batchId,
+    rowNumber: opts.rowNumber,
+    normalized,
+    petition,
+    canonicalTableQualified: opts.canonicalTableQualified,
+    cols: opts.cols,
+    searchPoolLimit: opts.searchPoolLimit ?? 120,
+    offset: newOff,
+    pageSize,
+  });
+
+  const conn2 = await pool.connect();
+  try {
+    await conn2.query("BEGIN");
+    await replaceReviewCandidateSnapshots(conn2, {
+      importBatchId: opts.batchId,
+      importRowId,
+      importVoterMatchId: matchId,
+      candidatePage: newPage,
+      ranked,
+    });
+    await conn2.query("COMMIT");
+  } catch (e) {
+    try {
+      await conn2.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  } finally {
+    conn2.release();
+  }
+
+  return { candidate_page: newPage, candidate_search_offset: newOff, candidates: ranked };
+}
+
+export async function runSelectReviewCandidate(
+  pool: Pool,
+  opts: {
+    batchId: string;
+    rowNumber: number;
+    candidateNumber: number;
+    reviewedBy: string;
+    note: string;
+    canonicalTableQualified: string;
+    cols: CanonicalColumnMap;
+    allowOutOfJurisdictionAttach?: boolean;
+  }
+): Promise<{ summary: Record<string, unknown> }> {
+  const conn = await pool.connect();
+  let voterId = "";
+  let jurisdictionStatus: string | null = null;
+  try {
+    const m = await getLatestMatchForRow(conn, opts.batchId, opts.rowNumber);
+    if (!m) throw new Error(`No import_voter_matches row for batch ${opts.batchId} row_number ${opts.rowNumber}`);
+    const snaps = await fetchSnapshotsForRowPage(conn, {
+      importBatchId: opts.batchId,
+      importRowId: m.importRowId,
+      candidatePage: m.candidatePage,
+    });
+    const pick = snaps.find((s) => s.candidate_rank === opts.candidateNumber);
+    if (!pick) {
+      throw new Error(
+        `No review_candidate_snapshots row for candidate_number=${opts.candidateNumber} on candidate_page=${m.candidatePage}. Run --review-next-under-threshold or --more-review-candidates first.`
+      );
+    }
+    voterId = pick.voter_id.trim();
+    if (!voterId) throw new Error("Snapshot voter_id is empty.");
+    jurisdictionStatus = pick.jurisdiction_status;
+  } finally {
+    conn.release();
+  }
+  return runApproveRow(pool, {
+    batchId: opts.batchId,
+    rowNumber: opts.rowNumber,
+    voterId,
+    reviewedBy: opts.reviewedBy,
+    note: opts.note,
+    canonicalTableQualified: opts.canonicalTableQualified,
+    cols: opts.cols,
+    operatorOverride: true,
+    allowOutOfJurisdictionAttach: opts.allowOutOfJurisdictionAttach === true,
+    jurisdictionStatusFromSelection: jurisdictionStatus,
+  });
+}
+
+export async function runPlaceNonvoter(
+  pool: Pool,
+  opts: {
+    batchId: string;
+    rowNumber: number;
+    reviewedBy: string;
+    note: string;
+    nonvoterReviewStatus?: "REJECTED" | "NEEDS_MORE_INFO";
+  }
+): Promise<{ summary: Record<string, unknown> }> {
+  const reviewStatus = opts.nonvoterReviewStatus === "NEEDS_MORE_INFO" ? "NEEDS_MORE_INFO" : "REJECTED";
+  const c = await pool.connect();
+  try {
+    await c.query("BEGIN");
+    const batch = await c.query<{
+      petition_id: string | null;
+      petition_code: string | null;
+      file_name: string | null;
+    }>(`SELECT petition_id, petition_code, file_name FROM import_batches WHERE id = $1::uuid FOR UPDATE`, [
+      opts.batchId,
+    ]);
+    const b = batch.rows[0];
+    if (!b?.petition_id || !b.petition_code) throw new Error("Batch is missing petition_id or petition_code.");
+
+    const row = await c.query<{ id: string; normalized_json: NormalizedRowJson; raw_json: RawRowJson }>(
+      `SELECT id, normalized_json, raw_json FROM import_rows
+       WHERE import_batch_id = $1::uuid AND row_number = $2`,
+      [opts.batchId, opts.rowNumber]
+    );
+    if (row.rows.length === 0) throw new Error(`import row not found for batch ${opts.batchId} row_number ${opts.rowNumber}`);
+    const ir = row.rows[0]!;
+    const matchInfo = await getLatestMatchForRow(c, opts.batchId, opts.rowNumber);
+    if (!matchInfo) throw new Error(`No import_voter_matches row for batch ${opts.batchId} row_number ${opts.rowNumber}`);
+
+    await insertInitiativeNonvoterEntry(c, {
+      petitionId: b.petition_id,
+      petitionCode: b.petition_code,
+      importBatchId: opts.batchId,
+      importRowId: ir.id,
+      importVoterMatchId: matchInfo.matchId,
+      sourceFileName: b.file_name,
+      rowNumber: opts.rowNumber,
+      signerFirstName: ir.normalized_json.first_name ?? null,
+      signerLastName: ir.normalized_json.last_name ?? null,
+      signerFullName: signerFullNameDisplay(ir.normalized_json),
+      signerAddress: ir.normalized_json.address_line_display ?? ir.normalized_json.address ?? null,
+      signerCity: ir.normalized_json.city ?? null,
+      signerCounty: ir.normalized_json.county ?? null,
+      signerState: ir.normalized_json.state ?? null,
+      signerZip: ir.normalized_json.zip ?? null,
+      signedAt: ir.normalized_json.signed_at ?? null,
+      reason: "NO_MATCH_FOUND",
+      reviewedBy: opts.reviewedBy,
+      reviewNote: opts.note,
+      rawRowJson: ir.raw_json,
+      normalizedJson: ir.normalized_json,
+      metadata: { source: "PLACE_NONVOTER" },
+    });
+
+    await c.query(
+      `UPDATE import_voter_matches
+       SET review_status = $2,
+           reviewed_at = now(),
+           reviewed_by = $3,
+           resolution_note = $4
+       WHERE id = $1::uuid`,
+      [matchInfo.matchId, reviewStatus, opts.reviewedBy, opts.note]
+    );
+
+    await insertImportMatchReview(c, {
+      importBatchId: opts.batchId,
+      importRowId: ir.id,
+      importVoterMatchId: matchInfo.matchId,
+      action: "PLACE_NONVOTER",
+      previousMatchStatus: matchInfo.matchStatus,
+      previousReviewStatus: matchInfo.reviewStatus,
+      selectedVoterId: null,
+      selectedPetitionId: b.petition_id,
+      selectedPetitionCode: b.petition_code,
+      reviewedBy: opts.reviewedBy,
+      reviewNote: opts.note,
+      metadata: { review_status: reviewStatus },
+    });
+
+    await c.query("COMMIT");
+    return {
+      summary: {
+        ok: true,
+        batch_id: opts.batchId,
+        row_number: opts.rowNumber,
+        import_voter_match_id: matchInfo.matchId,
+        review_status: reviewStatus,
+        petition_code: b.petition_code,
+      },
+    };
+  } catch (e) {
+    try {
+      await c.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+export async function runNonvoterReport(
+  pool: Pool,
+  opts: { petitionCode: string; outDir?: string }
+): Promise<{ out_json: string; out_csv: string; row_count: number }> {
+  const conn = await pool.connect();
+  let rows: NonvoterReportRow[] = [];
+  try {
+    rows = await fetchNonvoterEntriesForPetition(conn, opts.petitionCode);
+  } finally {
+    conn.release();
+  }
+  const base =
+    opts.outDir?.trim() ||
+    join(process.cwd(), "tools", "voter-file-matcher", "reports", `nonvoters-${opts.petitionCode.replace(/[^a-zA-Z0-9_-]+/g, "_")}`);
+  await mkdir(base, { recursive: true });
+  const outJson = join(base, "nonvoter_summary.json");
+  const outCsv = join(base, "nonvoter_entries.csv");
+  await writeFile(
+    outJson,
+    JSON.stringify(
+      {
+        petition_code: opts.petitionCode,
+        generated_at: new Date().toISOString(),
+        total: rows.length,
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+  const header = "row_number,first_name,last_name,address,city,state,zip,signed_at,reason,reviewed_by,reviewed_at,note";
+  const lines = [header];
+  for (const r of rows) {
+    lines.push(
+      [
+        r.row_number == null ? "" : String(r.row_number),
+        r.first_name ?? "",
+        r.last_name ?? "",
+        r.address ?? "",
+        r.city ?? "",
+        r.state ?? "",
+        r.zip ?? "",
+        r.signed_at ?? "",
+        r.reason,
+        r.reviewed_by ?? "",
+        r.reviewed_at ?? "",
+        r.note ?? "",
+      ]
+        .map((x) => escapeCsvCell(x))
+        .join(",")
+    );
+  }
+  await writeFile(outCsv, lines.join("\n") + "\n", "utf8");
+  return { out_json: outJson, out_csv: outCsv, row_count: rows.length };
 }
 
 export { parseCsvStatuses, DEFAULT_REVIEW_QUEUE_STATUSES };

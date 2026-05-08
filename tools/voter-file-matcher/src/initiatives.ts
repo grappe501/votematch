@@ -14,6 +14,12 @@ export type InitiativeRow = {
   target_signature_count: number | null;
   notes: string | null;
   project_key: string | null;
+  jurisdiction_name: string | null;
+  jurisdiction_city: string | null;
+  jurisdiction_county: string | null;
+  jurisdiction_state: string | null;
+  jurisdiction_type: string | null;
+  review_confidence_threshold: number | null;
   status: string;
   created_at: string;
   updated_at: string;
@@ -31,6 +37,12 @@ export async function upsertInitiative(
     reportingGeo?: ReportingGeo | null;
     targetSignatureCount?: number | null;
     notes?: string | null;
+    jurisdictionName?: string | null;
+    jurisdictionCity?: string | null;
+    jurisdictionCounty?: string | null;
+    jurisdictionState?: string | null;
+    jurisdictionType?: string | null;
+    reviewConfidenceThreshold?: number | null;
   }
 ): Promise<{ petition_id: string; created: boolean }> {
   const code = opts.petitionCode.trim();
@@ -41,12 +53,18 @@ export async function upsertInitiative(
   const existing = await pool.query<{ id: string }>(`SELECT id FROM petitions WHERE petition_code = $1`, [code]);
   const created = existing.rows.length === 0;
 
+  const rTh = opts.reviewConfidenceThreshold;
+  const reviewThreshold =
+    rTh != null && Number.isFinite(rTh) ? Math.max(0, Math.min(100, Math.round(rTh))) : null;
+
   const r = await pool.query<{ id: string }>(
     `INSERT INTO petitions (
       petition_code, petition_name, project_key,
       initiative_scope, reporting_geo, target_signature_count, notes,
+      jurisdiction_name, jurisdiction_city, jurisdiction_county, jurisdiction_state, jurisdiction_type,
+      review_confidence_threshold,
       updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, COALESCE($13, 80), now())
     ON CONFLICT (petition_code) DO UPDATE SET
       petition_name = EXCLUDED.petition_name,
       project_key = COALESCE(EXCLUDED.project_key, petitions.project_key),
@@ -54,6 +72,12 @@ export async function upsertInitiative(
       reporting_geo = COALESCE(EXCLUDED.reporting_geo, petitions.reporting_geo),
       target_signature_count = COALESCE(EXCLUDED.target_signature_count, petitions.target_signature_count),
       notes = COALESCE(EXCLUDED.notes, petitions.notes),
+      jurisdiction_name = COALESCE(EXCLUDED.jurisdiction_name, petitions.jurisdiction_name),
+      jurisdiction_city = COALESCE(EXCLUDED.jurisdiction_city, petitions.jurisdiction_city),
+      jurisdiction_county = COALESCE(EXCLUDED.jurisdiction_county, petitions.jurisdiction_county),
+      jurisdiction_state = COALESCE(EXCLUDED.jurisdiction_state, petitions.jurisdiction_state),
+      jurisdiction_type = COALESCE(EXCLUDED.jurisdiction_type, petitions.jurisdiction_type),
+      review_confidence_threshold = COALESCE(EXCLUDED.review_confidence_threshold, petitions.review_confidence_threshold),
       updated_at = now()
     RETURNING id`,
     [
@@ -64,19 +88,36 @@ export async function upsertInitiative(
       opts.reportingGeo?.trim() ?? null,
       opts.targetSignatureCount ?? null,
       opts.notes?.trim() ?? null,
+      opts.jurisdictionName?.trim() ?? null,
+      opts.jurisdictionCity?.trim() ?? null,
+      opts.jurisdictionCounty?.trim() ?? null,
+      opts.jurisdictionState?.trim() ?? null,
+      opts.jurisdictionType?.trim() ?? null,
+      reviewThreshold,
     ]
   );
   return { petition_id: r.rows[0]!.id, created };
 }
 
 export async function fetchInitiativeByCode(pool: Pool, petitionCode: string): Promise<InitiativeRow | null> {
-  const r = await pool.query<InitiativeRow>(
+  const r = await pool.query<InitiativeRow & { review_confidence_threshold: string | number | null }>(
     `SELECT id, petition_code, petition_name, initiative_scope, reporting_geo, target_signature_count,
-            notes, project_key, status, created_at::text, updated_at::text
+            notes, project_key,
+            jurisdiction_name, jurisdiction_city, jurisdiction_county, jurisdiction_state, jurisdiction_type,
+            review_confidence_threshold,
+            status, created_at::text, updated_at::text
      FROM petitions WHERE petition_code = $1`,
     [petitionCode.trim()]
   );
-  return r.rows[0] ?? null;
+  const row = r.rows[0];
+  if (!row) return null;
+  const thRaw = row.review_confidence_threshold;
+  const th =
+    thRaw != null && String(thRaw).trim() !== "" ? Number.parseInt(String(thRaw), 10) : 80;
+  return {
+    ...row,
+    review_confidence_threshold: Number.isFinite(th) ? th : 80,
+  };
 }
 
 export type ListInitiativesFilters = {
@@ -199,8 +240,17 @@ export async function getInitiativeSummary(pool: Pool, petitionCode: string): Pr
     for (const row of c.rows) total_by_county[row.k] = Number.parseInt(row.v, 10);
   }
 
+  const rqView = await pool.query<{ e: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.views
+       WHERE table_schema = 'public' AND table_name = 'initiative_review_queue_80'
+     ) AS e`
+  );
+  const use80 = Boolean(rqView.rows[0]?.e);
   const rq = await pool.query<{ c: string }>(
-    `SELECT COUNT(*)::text AS c FROM initiative_review_confidence_queue WHERE petition_code = $1`,
+    use80
+      ? `SELECT COUNT(*)::text AS c FROM initiative_review_queue_80 WHERE petition_code = $1`
+      : `SELECT COUNT(*)::text AS c FROM initiative_review_confidence_queue WHERE petition_code = $1`,
     [petitionCode]
   );
   const review_remaining = Number.parseInt(rq.rows[0]?.c ?? "0", 10);
@@ -261,11 +311,25 @@ export async function validateInitiativeExecutionGuards(
     reportingGeo?: string | null;
     targetSignatureCount?: number | null;
     profileName?: string | null;
+    confirmMissingJurisdiction?: boolean;
   }
 ): Promise<ExecutionGuardResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
   const pet = await fetchInitiativeByCode(pool, opts.petitionCode);
+  const scopeUp = (pet?.initiative_scope ?? opts.initiativeScope ?? "").toUpperCase();
+  const jtUp = (pet?.jurisdiction_type ?? "").toUpperCase();
+  const cityScope = scopeUp === "CITY" || jtUp === "CITY";
+  if (cityScope && pet) {
+    const hasJ =
+      Boolean(pet.jurisdiction_city?.trim()) &&
+      Boolean(pet.jurisdiction_state?.trim());
+    if (!hasJ && opts.confirmMissingJurisdiction !== true) {
+      errors.push(
+        "Initiative scope is CITY but petitions.jurisdiction_city and jurisdiction_state are not both set. Set them via --upsert-initiative or pass --confirm-missing-jurisdiction to proceed."
+      );
+    }
+  }
   if (!pet && !opts.autoCreateInitiative) {
     errors.push(
       `Initiative ${opts.petitionCode} does not exist. Run --upsert-initiative first, or pass --auto-create-initiative with name/scope/geo.`
@@ -283,6 +347,24 @@ export async function validateInitiativeExecutionGuards(
   }
 
   const ms = readMatchSourceTableEnv();
+  if (cityScope && ms) {
+    const cols = await fetchTableColumnNames(pool, ms);
+    const hasCity = ["city", "city_norm", "jurisdiction_city", "municipality"].some((c) => {
+      const low = c.toLowerCase();
+      for (const x of cols) if (x.toLowerCase() === low) return true;
+      return false;
+    });
+    const hasState = ["state", "jurisdiction_state"].some((c) => {
+      const low = c.toLowerCase();
+      for (const x of cols) if (x.toLowerCase() === low) return true;
+      return false;
+    });
+    if (!hasCity || !hasState) {
+      warnings.push(
+        "CITY jurisdiction initiative: VFM_MATCH_SOURCE_TABLE lacks reliable city/state columns; OUT_OF_JURISDICTION detection for matched voters may be incomplete."
+      );
+    }
+  }
   const geo = reportingResolved.toUpperCase();
   if (ms && geo === "WARD") {
     const cols = await fetchTableColumnNames(pool, ms);

@@ -506,6 +506,7 @@ export async function executeImportPlanFromDisk(opts: {
   reportingGeo?: string | null;
   targetSignatureCount?: number | null;
   initiativeNotes?: string | null;
+  confirmMissingJurisdiction?: boolean;
 }): Promise<Awaited<ReturnType<typeof runFullImport>>> {
   const planPath = resolve(opts.planPath);
   const plan = await readImportPlan(planPath);
@@ -565,6 +566,7 @@ export async function executeImportPlanFromDisk(opts: {
     reportingGeo: opts.reportingGeo ?? snap?.reporting_geo ?? null,
     targetSignatureCount: opts.targetSignatureCount ?? snap?.target_signature_count ?? null,
     initiativeNotes: opts.initiativeNotes ?? null,
+    confirmMissingJurisdiction: opts.confirmMissingJurisdiction === true,
   });
 
   plan.execution = {

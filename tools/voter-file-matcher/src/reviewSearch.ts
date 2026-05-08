@@ -18,6 +18,7 @@ export type VoterSearchCandidate = {
   birth_date: string;
   address: string;
   city: string;
+  county: string;
   state: string;
   zip5: string;
   ward: string;
@@ -82,6 +83,7 @@ async function runLimitedQuery(
       birth_date: String(row.birth_date ?? ""),
       address: String(row.address ?? ""),
       city: String(row.city ?? ""),
+      county: String(row.county ?? ""),
       state: String(row.state ?? ""),
       zip5: String(row.zip5 ?? ""),
       ward: String(row.ward ?? ""),
@@ -156,6 +158,7 @@ export async function searchVotersForRow(
     const by = pickCol(colsDb, ["birth_year"]);
     const bd = pickCol(colsDb, ["birth_date"]);
     const st = pickCol(colsDb, ["state"]);
+    const co = pickCol(colsDb, ["county_norm", "county"]);
     const wcol = pickCol(colsDb, ["ward", "ward_norm"]);
     const pcol = pickCol(colsDb, ["precinct", "precinct_norm"]);
     if (!ln || !vid) throw new Error("Match source must expose voter_id and last name column for search.");
@@ -176,6 +179,7 @@ export async function searchVotersForRow(
       bd ? `${colExpr(qt, bd)}::text AS birth_date` : `''::text AS birth_date`,
       an ? `${colExpr(qt, an)}::text AS address` : `''::text AS address`,
       cn ? `${colExpr(qt, cn)}::text AS city` : `''::text AS city`,
+      co ? `${colExpr(qt, co)}::text AS county` : `''::text AS county`,
       st ? `${colExpr(qt, st)}::text AS state` : `''::text AS state`,
       z5 ? `${colExpr(qt, z5)}::text AS zip5` : `''::text AS zip5`,
       wcol ? `${colExpr(qt, wcol)}::text AS ward` : `''::text AS ward`,
@@ -256,6 +260,7 @@ export async function searchVotersForRow(
     const cityC = opts.cols.city;
     const zipC = opts.cols.zip;
     const addrC = opts.cols.address;
+    const countyC = opts.cols.county;
     const byC = opts.cols.birth_year;
     const bdC = opts.cols.birth_date;
 
@@ -267,6 +272,7 @@ export async function searchVotersForRow(
       bdC ? `${colExpr(qtC, bdC)}::text AS birth_date` : `''::text AS birth_date`,
       addrC ? `${colExpr(qtC, addrC)}::text AS address` : `''::text AS address`,
       cityC ? `${colExpr(qtC, cityC)}::text AS city` : `''::text AS city`,
+      countyC ? `${colExpr(qtC, countyC)}::text AS county` : `''::text AS county`,
       `''::text AS state`,
       zipC ? `${colExpr(qtC, zipC)}::text AS zip5` : `''::text AS zip5`,
       `''::text AS ward`,

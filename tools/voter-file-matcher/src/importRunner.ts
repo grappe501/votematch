@@ -17,10 +17,16 @@ import {
   tryAppendReviewStatsToSummary,
   writeLocalReportFiles,
 } from "./reports.js";
-import { applyWithinFileDuplicateFlags, buildQaFlagsCsvRow, processMappedRow } from "./rowPipeline.js";
+import { applyWithinFileDuplicateFlags, buildQaFlagsCsvRow, processMappedRow, stableDuplicateKey } from "./rowPipeline.js";
 import { toTitleCaseFromLower } from "./normalize.js";
-import { fetchVoterGeoForVoterId, readMatchSourceTableEnv } from "./matchSource.js";
-import { calculateMatchConfidencePct } from "./confidence.js";
+import { fetchVoterGeoForVoterId, fetchVoterLocationSnapshot, readMatchSourceTableEnv } from "./matchSource.js";
+import { calculateMatchConfidencePct, searchPriorityFromConfidence } from "./confidence.js";
+import {
+  evaluateJurisdictionStatus,
+  evaluateSignerJurisdictionStatus,
+  type JurisdictionPetitionContext,
+} from "./jurisdiction.js";
+import { hasSevereQaForReviewQueue } from "./matchQuality.js";
 import { upsertInitiative, validateInitiativeExecutionGuards } from "./initiatives.js";
 import type {
   CsvReportRow,
@@ -129,6 +135,108 @@ function aggregateSummaryExtensions(prepared: { row_number: number; normalized: 
   };
 }
 
+function importRowNeedsInitiativeReviewQueue80(opts: {
+  matchStatus: string;
+  matchConfidencePct: number | null;
+  reviewThreshold: number;
+  jurisdictionStatus: string | null;
+  duplicateStatus: string;
+  normalized: NormalizedRowJson;
+}): boolean {
+  const pct = opts.matchConfidencePct ?? 0;
+  const j = opts.jurisdictionStatus ?? "NOT_CHECKED";
+  const d = opts.duplicateStatus;
+  return (
+    opts.matchStatus !== "MATCHED" ||
+    pct < opts.reviewThreshold ||
+    j === "OUT_OF_JURISDICTION" ||
+    j === "UNKNOWN_JURISDICTION" ||
+    j === "NOT_CHECKED" ||
+    d === "DUPLICATE_WITHIN_FILE" ||
+    d === "DUPLICATE_EXISTING_SIGNATURE" ||
+    d === "POSSIBLE_DUPLICATE" ||
+    hasSevereQaForReviewQueue(opts.normalized)
+  );
+}
+
+async function finalizePossibleDuplicateSignerKeys(pool: import("pg").Pool, batchId: string): Promise<void> {
+  const r = await pool.query<{
+    mid: string;
+    normalized_json: NormalizedRowJson;
+    voter_id: string | null;
+    duplicate_status: string | null;
+    review_status: string;
+  }>(
+    `SELECT mr.id AS mid, ir.normalized_json, mr.voter_id, mr.duplicate_status, mr.review_status::text AS review_status
+     FROM import_voter_matches mr
+     INNER JOIN import_rows ir ON ir.id = mr.import_row_id
+     WHERE mr.import_batch_id = $1::uuid`,
+    [batchId]
+  );
+  type R = (typeof r.rows)[number];
+  const groups = new Map<string, R[]>();
+  for (const row of r.rows) {
+    const k = stableDuplicateKey(row.normalized_json);
+    if (!k.replace(/\u001f/g, "")) continue;
+    const arr = groups.get(k) ?? [];
+    arr.push(row);
+    groups.set(k, arr);
+  }
+  for (const arr of groups.values()) {
+    if (arr.length < 2) continue;
+    const vset = new Set(arr.map((x) => (x.voter_id ?? "").trim() || "__NONE__"));
+    if (vset.size <= 1) continue;
+    for (const row of arr) {
+      if (row.duplicate_status === "DUPLICATE_WITHIN_FILE" || row.duplicate_status === "DUPLICATE_EXISTING_SIGNATURE") {
+        continue;
+      }
+      const open = row.review_status === "UNREVIEWED" || row.review_status === "NEEDS_MORE_INFO";
+      await pool.query(
+        `UPDATE import_voter_matches
+         SET duplicate_status = 'POSSIBLE_DUPLICATE',
+             is_in_review_queue = CASE WHEN $2::boolean THEN true ELSE is_in_review_queue END
+         WHERE id = $1::uuid`,
+        [row.mid, open]
+      );
+    }
+  }
+}
+
+async function loadPetitionImportContext(
+  pool: import("pg").Pool,
+  petitionId: string
+): Promise<{ reviewThreshold: number; jurisdictionCtx: JurisdictionPetitionContext }> {
+  try {
+    const r = await pool.query<{
+      initiative_scope: string | null;
+      jurisdiction_type: string | null;
+      jurisdiction_city: string | null;
+      jurisdiction_county: string | null;
+      jurisdiction_state: string | null;
+      th: string | number | null;
+    }>(
+      `SELECT initiative_scope, jurisdiction_type, jurisdiction_city, jurisdiction_county, jurisdiction_state,
+              COALESCE(review_confidence_threshold, 80) AS th
+       FROM petitions WHERE id = $1::uuid`,
+      [petitionId]
+    );
+    const x = r.rows[0];
+    const thRaw = x?.th != null ? Number.parseInt(String(x.th), 10) : 80;
+    return {
+      reviewThreshold: Number.isFinite(thRaw) ? thRaw : 80,
+      jurisdictionCtx: {
+        initiative_scope: x?.initiative_scope ?? null,
+        jurisdiction_type: x?.jurisdiction_type ?? null,
+        jurisdiction_city: x?.jurisdiction_city ?? null,
+        jurisdiction_county: x?.jurisdiction_county ?? null,
+        jurisdiction_state: x?.jurisdiction_state ?? null,
+      },
+    };
+  } catch {
+    return { reviewThreshold: 80, jurisdictionCtx: {} };
+  }
+}
+
 type PreparedRow = {
   row_number: number;
   chunk_number: number;
@@ -152,6 +260,8 @@ export type RunFullImportParams = {
   reportingGeo?: string | null;
   targetSignatureCount?: number | null;
   initiativeNotes?: string | null;
+  /** When initiative is CITY without jurisdiction_city/state in DB, import aborts unless true. */
+  confirmMissingJurisdiction?: boolean;
 };
 
 export type RunFullImportResult = {
@@ -193,6 +303,7 @@ export async function runFullImport(params: RunFullImportParams): Promise<RunFul
     reportingGeo,
     targetSignatureCount,
     initiativeNotes,
+    confirmMissingJurisdiction,
   } = params;
 
   const buf = await readFile(filePath);
@@ -210,6 +321,7 @@ export async function runFullImport(params: RunFullImportParams): Promise<RunFul
     reportingGeo: reportingGeo ?? null,
     targetSignatureCount: targetSignatureCount ?? null,
     profileName: mapFile.profileName ?? null,
+    confirmMissingJurisdiction: confirmMissingJurisdiction === true,
   });
   for (const w of guard.warnings) {
     console.warn(`[voter-match] initiative guard: ${w}`);
@@ -328,6 +440,7 @@ export async function runFullImport(params: RunFullImportParams): Promise<RunFul
     }
 
     const rowChunks = chunkArray(prepared, chunkSize);
+    const petitionImportContext = await loadPetitionImportContext(pool, petitionId);
 
     for (const chunk of rowChunks) {
       const c = await pool.connect();
@@ -375,11 +488,62 @@ export async function runFullImport(params: RunFullImportParams): Promise<RunFul
             voterId: outcome.voterId,
             normalized: row.normalized,
           });
+
+          const { reviewThreshold, jurisdictionCtx } = petitionImportContext;
+          let duplicateStatus: string = (row.normalized._qa_flags ?? []).includes("POSSIBLE_DUPLICATE_WITHIN_FILE")
+            ? "DUPLICATE_WITHIN_FILE"
+            : "NOT_DUPLICATE";
+
+          let jurisdictionStatus: string | null =
+            outcome.status === "MATCHED" && outcome.voterId
+              ? "NOT_CHECKED"
+              : evaluateSignerJurisdictionStatus(jurisdictionCtx, row.normalized);
+
+          const geoTable = readMatchSourceTableEnv()?.trim() || canonicalTable;
+          if (outcome.status === "MATCHED" && outcome.voterId) {
+            try {
+              const loc = await fetchVoterLocationSnapshot(c, {
+                qualifiedTable: geoTable,
+                voterId: outcome.voterId,
+              });
+              jurisdictionStatus = evaluateJurisdictionStatus(jurisdictionCtx, {
+                city: loc.city,
+                county: loc.county,
+                state: loc.state,
+                district: loc.district || loc.ward,
+              });
+            } catch {
+              jurisdictionStatus = evaluateSignerJurisdictionStatus(jurisdictionCtx, row.normalized);
+            }
+          }
+
+          if (outcome.status === "MATCHED" && outcome.voterId) {
+            const ex = await c.query<{ id: string }>(
+              `SELECT id FROM voter_petition_signatures WHERE voter_id = $1 AND petition_id = $2::uuid LIMIT 1`,
+              [outcome.voterId, petitionId]
+            );
+            if (ex.rows.length > 0) duplicateStatus = "DUPLICATE_EXISTING_SIGNATURE";
+          }
+
+          const isInReviewQueue = importRowNeedsInitiativeReviewQueue80({
+            matchStatus: outcome.status,
+            matchConfidencePct,
+            reviewThreshold,
+            jurisdictionStatus,
+            duplicateStatus,
+            normalized: row.normalized,
+          });
+          const pr = searchPriorityFromConfidence(matchConfidencePct, outcome.status, row.normalized);
+          const reviewPriority =
+            pr === "HIGH" ? 10 : pr === "MEDIUM" ? 50 : pr === "LOW" ? 90 : pr === "BLOCKED" ? 99 : null;
+
           const insMr = await c.query<{ id: string }>(
             `INSERT INTO import_voter_matches (
               import_batch_id, import_row_id, voter_id, match_status, match_confidence, match_method,
-              candidate_count, candidate_voter_ids, notes, match_confidence_pct
-            ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+              candidate_count, candidate_voter_ids, notes, match_confidence_pct,
+              jurisdiction_status, duplicate_status, is_in_review_queue, review_priority,
+              candidate_page, candidate_search_offset
+            ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, 0, 0)
             RETURNING id`,
             [
               batchId,
@@ -392,6 +556,10 @@ export async function runFullImport(params: RunFullImportParams): Promise<RunFul
               JSON.stringify(outcome.candidateIds),
               outcome.notes,
               matchConfidencePct,
+              jurisdictionStatus,
+              duplicateStatus,
+              isInReviewQueue,
+              reviewPriority,
             ]
           );
           const importVoterMatchId = insMr.rows[0]!.id;
@@ -404,15 +572,20 @@ export async function runFullImport(params: RunFullImportParams): Promise<RunFul
           else if (outcome.status === "WEAK_MATCH") weakCsv.push(csvRow);
           else errorsCsv.push(csvRow);
 
-          if (outcome.status === "MATCHED" && outcome.voterId) {
-            const geoTable = readMatchSourceTableEnv()?.trim() || canonicalTable;
+          const allowAutoAttach =
+            outcome.status === "MATCHED" &&
+            Boolean(outcome.voterId) &&
+            jurisdictionStatus === "IN_JURISDICTION" &&
+            duplicateStatus !== "DUPLICATE_EXISTING_SIGNATURE";
+
+          if (allowAutoAttach) {
             let voterWard: string | null = null;
             let voterPrecinct: string | null = null;
             let voterDistrict: string | null = null;
             try {
               const g = await fetchVoterGeoForVoterId(c, {
                 qualifiedTable: geoTable,
-                voterId: outcome.voterId,
+                voterId: outcome.voterId!,
               });
               voterWard = g.voter_ward;
               voterPrecinct = g.voter_precinct;
@@ -421,7 +594,7 @@ export async function runFullImport(params: RunFullImportParams): Promise<RunFul
               /* optional geo */
             }
             const { signatureId, existedBefore } = await upsertPetitionSignature(c, {
-              voterId: outcome.voterId,
+              voterId: outcome.voterId!,
               petitionId,
               petitionCode,
               importBatchId: batchId,
@@ -446,13 +619,15 @@ export async function runFullImport(params: RunFullImportParams): Promise<RunFul
               voterPrecinct,
               voterDistrict,
               matchConfidencePct,
+              jurisdictionStatus: "IN_JURISDICTION",
+              duplicateStatus: "NOT_DUPLICATE",
             });
             signaturesUpserted += 1;
 
             try {
               await insertSignatureEvent(c, {
                 voterPetitionSignatureId: signatureId,
-                voterId: outcome.voterId,
+                voterId: outcome.voterId!,
                 petitionId,
                 petitionCode,
                 importBatchId: batchId,
@@ -485,6 +660,8 @@ export async function runFullImport(params: RunFullImportParams): Promise<RunFul
         c.release();
       }
     }
+
+    await finalizePossibleDuplicateSignerKeys(pool, batchId);
 
     await pool.query(
       `UPDATE import_batches SET status = 'COMPLETED', completed_at = now(), total_rows = $2 WHERE id = $1::uuid`,

@@ -45,6 +45,11 @@ export const STANDARD_MATCH_SOURCE_COLUMNS = [
   "precinct_norm",
   "district",
   "district_norm",
+  "jurisdiction_city",
+  "jurisdiction_county",
+  "jurisdiction_state",
+  "municipality",
+  "city_limits_flag",
 ] as const;
 
 export type StandardMatchSourceColumn = (typeof STANDARD_MATCH_SOURCE_COLUMNS)[number];
@@ -476,6 +481,76 @@ export async function fetchVoterGeoForVoterId(
     voter_ward: row?.voter_ward?.trim() ? row.voter_ward : null,
     voter_precinct: row?.voter_precinct?.trim() ? row.voter_precinct : null,
     voter_district: row?.voter_district?.trim() ? row.voter_district : null,
+  };
+}
+
+/** City / county / state (and ward geo) for jurisdiction checks; nulls when columns missing. */
+export type VoterLocationSnapshot = {
+  city: string | null;
+  county: string | null;
+  state: string | null;
+  ward: string | null;
+  precinct: string | null;
+  district: string | null;
+};
+
+export async function fetchVoterLocationSnapshot(
+  client: Pick<PoolClient, "query">,
+  opts: { qualifiedTable: string; voterId: string }
+): Promise<VoterLocationSnapshot> {
+  const empty: VoterLocationSnapshot = {
+    city: null,
+    county: null,
+    state: null,
+    ward: null,
+    precinct: null,
+    district: null,
+  };
+  const cols = await fetchTableColumnNames(client, opts.qualifiedTable);
+  const qt = qualifiedTableSql(opts.qualifiedTable);
+  const vidCol = pickExistingColumn(cols, ["voter_id"]);
+  if (!vidCol) return empty;
+
+  const cn = pickExistingColumn(cols, ["jurisdiction_city", "municipality", "city_norm", "city"]);
+  const co = pickExistingColumn(cols, ["jurisdiction_county", "county_norm", "county"]);
+  const st = pickExistingColumn(cols, ["jurisdiction_state", "state"]);
+  const wCol = pickExistingColumn(cols, ["ward", "ward_norm"]);
+  const pCol = pickExistingColumn(cols, ["precinct", "precinct_norm"]);
+  const dCol = pickExistingColumn(cols, ["district", "district_norm"]);
+
+  const vidExpr = colExpr(qt, assertSqlIdent(vidCol, "voter_id"));
+  const cExpr = cn ? `${colExpr(qt, assertSqlIdent(cn, "city"))}::text` : `NULL::text`;
+  const coExpr = co ? `${colExpr(qt, assertSqlIdent(co, "county"))}::text` : `NULL::text`;
+  const stExpr = st ? `${colExpr(qt, assertSqlIdent(st, "state"))}::text` : `NULL::text`;
+  const wExpr = wCol ? `${colExpr(qt, assertSqlIdent(wCol, "ward"))}::text` : `NULL::text`;
+  const pExpr = pCol ? `${colExpr(qt, assertSqlIdent(pCol, "precinct"))}::text` : `NULL::text`;
+  const dExpr = dCol ? `${colExpr(qt, assertSqlIdent(dCol, "district"))}::text` : `NULL::text`;
+
+  const r = await client.query<{
+    city: string | null;
+    county: string | null;
+    state: string | null;
+    ward: string | null;
+    precinct: string | null;
+    district: string | null;
+  }>(
+    `SELECT ${cExpr} AS city, ${coExpr} AS county, ${stExpr} AS state,
+            ${wExpr} AS ward, ${pExpr} AS precinct, ${dExpr} AS district
+     FROM ${qt}
+     WHERE lower(btrim(${vidExpr}::text)) = lower(btrim($1::text))
+     LIMIT 1`,
+    [opts.voterId.trim()]
+  );
+  const row = r.rows[0];
+  if (!row) return empty;
+  const t = (s: string | null | undefined) => (s?.trim() ? s.trim() : null);
+  return {
+    city: t(row.city),
+    county: t(row.county),
+    state: t(row.state),
+    ward: t(row.ward),
+    precinct: t(row.precinct),
+    district: t(row.district),
   };
 }
 

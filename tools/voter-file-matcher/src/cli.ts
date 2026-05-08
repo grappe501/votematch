@@ -38,6 +38,11 @@ import {
   runNeedsMoreInfo,
   runRejectRow,
   runReviewProgress,
+  runReviewNextUnderThreshold,
+  runMoreReviewCandidates,
+  runSelectReviewCandidate,
+  runPlaceNonvoter,
+  runNonvoterReport,
 } from "./review.js";
 import { writeBatchOperatorReport, writePetitionOperatorReport } from "./reporting.js";
 import { fetchNextReviewRow, searchVotersForRow } from "./reviewSearch.js";
@@ -103,6 +108,17 @@ type ReviewCliOpts = {
   skipReviewRow?: boolean;
   rejectReviewRow?: boolean;
   reviewProgress?: boolean;
+  reviewNextUnderThreshold?: boolean;
+  moreReviewCandidates?: boolean;
+  /** True when using --select-review-candidate (pick from saved snapshot ranks). */
+  selectReviewCandidate?: boolean;
+  placeNonvoter?: boolean;
+  nonvoterReport?: string;
+  candidateNumber?: number;
+  allowOutOfJurisdictionAttach?: boolean;
+  nonvoterStatus?: string;
+  reviewThreshold?: number;
+  candidatePageSize?: number;
   includeSensitive?: boolean;
   searchLastName?: string;
   searchFirstName?: string;
@@ -162,6 +178,13 @@ type Opts = {
   targetSignatureCount?: number;
   initiativeNotes?: string;
   autoCreateInitiative?: boolean;
+  jurisdictionType?: string;
+  jurisdictionCity?: string;
+  jurisdictionCounty?: string;
+  jurisdictionState?: string;
+  jurisdictionName?: string;
+  reviewConfidenceThreshold?: number;
+  confirmMissingJurisdiction?: boolean;
 } & ReviewCliOpts;
 
 function resolveMapOrProfilePath(opts: Opts): string {
@@ -430,6 +453,127 @@ async function handleReportingAndSearchCli(opts: Opts): Promise<boolean> {
     return true;
   }
 
+  if (opts.reviewNextUnderThreshold === true) {
+    const batchId = opts.batchId?.trim();
+    if (!batchId) throw new Error("--batch-id is required for --review-next-under-threshold.");
+    const mapPath = resolveMapOrProfilePath(opts);
+    const canonicalTable = process.env.VFM_CANONICAL_TABLE?.trim() ?? "";
+    if (!canonicalTable && !readMatchSourceTableEnv()) {
+      throw new Error("Set VFM_CANONICAL_TABLE or VFM_MATCH_SOURCE_TABLE for --review-next-under-threshold.");
+    }
+    const mapFile = await loadHeaderMapFile(mapPath);
+    const cols = buildCanonicalColumnMap(mapFile);
+    const pool = createPool();
+    try {
+      const r = await runReviewNextUnderThreshold(pool, {
+        batchId,
+        canonicalTableQualified: canonicalTable,
+        cols,
+      });
+      if (json) {
+        console.log(JSON.stringify({ review_next_under_threshold: r }, null, 2));
+      } else if (!r.queue_row) {
+        console.log("(no rows in initiative_review_queue_80 for this batch)");
+      } else {
+        const q = r.queue_row;
+        const inc = opts.includeSensitive !== false;
+        console.log(
+          JSON.stringify({
+            row_number: q.row_number,
+            match_status: q.match_status,
+            match_confidence_pct: q.match_confidence_pct,
+            review_status: q.review_status,
+            jurisdiction_status: q.jurisdiction_status,
+            duplicate_status: q.duplicate_status,
+            candidate_count: q.candidate_count,
+            review_threshold: q.review_confidence_threshold,
+            petition_code: q.petition_code,
+            candidates_returned: r.candidates.length,
+            commands: r.commands,
+          })
+        );
+        if (inc) {
+          console.log(
+            [
+              `signer_name=${(q.signer_first_name ?? "")} ${(q.signer_last_name ?? "")}`.trim(),
+              `address=${q.signer_address ?? ""}`,
+              `city=${q.signer_city ?? ""}`,
+              `state=${q.signer_state ?? ""}`,
+              `zip=${q.signer_zip ?? ""}`,
+              `signed_at=${q.signed_at ?? ""}`,
+              `birth_year=${q.normalized_json?.birth_year ?? ""}`,
+              `notes=${q.match_notes ?? ""}`,
+            ].join("\n")
+          );
+          let i = 1;
+          for (const c of r.candidates) {
+            console.log(
+              [
+                `${i}. voter_id=${c.voter_id}`,
+                `score=${c.candidate_score}`,
+                `reason=${c.candidate_reason}`,
+                `jurisdiction=${c.jurisdiction_status}`,
+                `name=${c.first_name} ${c.last_name}`,
+                `city=${c.city}`,
+                `zip5=${c.zip5}`,
+              ].join(" | ")
+            );
+            i += 1;
+          }
+        }
+      }
+    } finally {
+      await pool.end().catch(() => undefined);
+    }
+    return true;
+  }
+
+  if (opts.moreReviewCandidates === true) {
+    const batchId = opts.batchId?.trim();
+    if (!batchId) throw new Error("--batch-id is required for --more-review-candidates.");
+    const rowNum = opts.rowNumber;
+    if (rowNum == null || !Number.isFinite(rowNum)) {
+      throw new Error("--row-number is required for --more-review-candidates.");
+    }
+    const mapPath = resolveMapOrProfilePath(opts);
+    const canonicalTable = process.env.VFM_CANONICAL_TABLE?.trim() ?? "";
+    if (!canonicalTable && !readMatchSourceTableEnv()) {
+      throw new Error("Set VFM_CANONICAL_TABLE or VFM_MATCH_SOURCE_TABLE for --more-review-candidates.");
+    }
+    const mapFile = await loadHeaderMapFile(mapPath);
+    const cols = buildCanonicalColumnMap(mapFile);
+    const pool = createPool();
+    try {
+      const r = await runMoreReviewCandidates(pool, {
+        batchId,
+        rowNumber: rowNum,
+        canonicalTableQualified: canonicalTable,
+        cols,
+        pageSize: opts.candidatePageSize,
+      });
+      if (json) console.log(JSON.stringify({ more_review_candidates: r }, null, 2));
+      else console.log(JSON.stringify({ more_review_candidates: r }));
+    } finally {
+      await pool.end().catch(() => undefined);
+    }
+    return true;
+  }
+
+  if (opts.nonvoterReport?.trim()) {
+    const code = opts.nonvoterReport.trim();
+    const pool = createPool();
+    try {
+      const outRel = opts.out?.trim() || join("tools", "voter-file-matcher", "reports", `nonvoters-${code}`);
+      const outDir = resolve(process.cwd(), outRel);
+      const r = await runNonvoterReport(pool, { petitionCode: code, outDir });
+      if (json) console.log(JSON.stringify({ nonvoter_report: r }, null, 2));
+      else console.log(JSON.stringify({ nonvoter_report: r }));
+    } finally {
+      await pool.end().catch(() => undefined);
+    }
+    return true;
+  }
+
   return false;
 }
 
@@ -445,7 +589,9 @@ async function handleReviewCli(opts: Opts): Promise<boolean> {
     approve ||
     reject ||
     nmi ||
-    opts.addReviewNote === true;
+    opts.addReviewNote === true ||
+    opts.selectReviewCandidate === true ||
+    opts.placeNonvoter === true;
   if (!hasReview) return false;
 
   const pool = createPool();
@@ -523,6 +669,66 @@ async function handleReviewCli(opts: Opts): Promise<boolean> {
         join(process.cwd(), "tools", "voter-file-matcher", "reports", batchId, "review_queue.csv");
       const p = await exportReviewQueueCsv(pool, { batchId, matchStatuses: statuses, outPath });
       console.log(json ? JSON.stringify({ ok: true, path: p }) : `Wrote ${p}`);
+      return true;
+    }
+
+    if (opts.selectReviewCandidate === true) {
+      const rowNum = opts.rowNumber;
+      if (rowNum == null || !Number.isFinite(rowNum)) {
+        throw new Error("--row-number is required for --select-review-candidate.");
+      }
+      const reviewedBy = opts.reviewedBy?.trim();
+      if (!reviewedBy) throw new Error('--reviewed-by is required for --select-review-candidate.');
+      const note = opts.note?.trim() ?? "";
+      const cn = opts.candidateNumber;
+      if (cn == null || !Number.isFinite(cn)) {
+        throw new Error("--candidate-number is required for --select-review-candidate.");
+      }
+      const mapPath = resolveMapOrProfilePath(opts);
+      const canonicalTable = process.env.VFM_CANONICAL_TABLE?.trim() ?? "";
+      if (!canonicalTable && !readMatchSourceTableEnv()) {
+        throw new Error("Set VFM_CANONICAL_TABLE or VFM_MATCH_SOURCE_TABLE for --select-review-candidate.");
+      }
+      const mapFile = await loadHeaderMapFile(mapPath);
+      const cols = buildCanonicalColumnMap(mapFile);
+      const r = await runSelectReviewCandidate(pool, {
+        batchId,
+        rowNumber: rowNum,
+        candidateNumber: cn,
+        reviewedBy,
+        note,
+        canonicalTableQualified: canonicalTable,
+        cols,
+        allowOutOfJurisdictionAttach: opts.allowOutOfJurisdictionAttach === true,
+      });
+      if (json) console.log(JSON.stringify(r.summary, null, 2));
+      else {
+        for (const [k, v] of Object.entries(r.summary)) console.log(`${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+      }
+      return true;
+    }
+
+    if (opts.placeNonvoter === true) {
+      const rowNum = opts.rowNumber;
+      if (rowNum == null || !Number.isFinite(rowNum)) {
+        throw new Error("--row-number is required for --place-nonvoter.");
+      }
+      const reviewedBy = opts.reviewedBy?.trim();
+      if (!reviewedBy) throw new Error('--reviewed-by is required for --place-nonvoter.');
+      const note = opts.note?.trim() ?? "";
+      const st = (opts.nonvoterStatus ?? "REJECTED").trim().toUpperCase();
+      const nonvoterReviewStatus = st === "NEEDS_MORE_INFO" ? "NEEDS_MORE_INFO" : "REJECTED";
+      const r = await runPlaceNonvoter(pool, {
+        batchId,
+        rowNumber: rowNum,
+        reviewedBy,
+        note,
+        nonvoterReviewStatus,
+      });
+      if (json) console.log(JSON.stringify(r.summary, null, 2));
+      else {
+        for (const [k, v] of Object.entries(r.summary)) console.log(`${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+      }
       return true;
     }
 
@@ -655,6 +861,22 @@ program
   .option("--skip-review-row", "Alias for --needs-more-info", false)
   .option("--reject-review-row", "Alias for --reject-row", false)
   .option("--review-progress", "Safe progress counts for a batch", false)
+  .option(
+    "--review-next-under-threshold",
+    "Next row from initiative_review_queue_80 with top 5 ranked candidates (local operator)",
+    false
+  )
+  .option("--more-review-candidates", "Next page of ranked candidates for a batch row (snapshots only)", false)
+  .option("--select-review-candidate", "Attach voter from latest review_candidate_snapshots page (rank 1–5)", false)
+  .option("--place-nonvoter", "Insert initiative_nonvoter_entries and set import match review status", false)
+  .option("--nonvoter-report <code>", "Write nonvoter_summary.json + nonvoter_entries.csv for a petition_code")
+  .option("--candidate-number <n>", "With --select-review-candidate: snapshot candidate_rank (1–5)", (v) => Number.parseInt(v, 10))
+  .option("--candidate-page-size <n>", "With --more-review-candidates (default 5)", (v) => Number.parseInt(v, 10))
+  .option("--allow-out-of-jurisdiction-attach", "With --select-review-candidate: attach even if OUT_OF_JURISDICTION", false)
+  .option("--nonvoter-status <s>", "REJECTED (default) or NEEDS_MORE_INFO for --place-nonvoter match review_status")
+  .option("--review-threshold <n>", "Optional display threshold override (petition DB value is authoritative)", (v) =>
+    Number.parseInt(v, 10)
+  )
   .option("--include-sensitive", "Allow extra signer fields on console for local review commands", false)
   .option("--search-last-name <text>", "Override last name for --search-voters-for-row")
   .option("--search-first-name <text>", "Override first name for --search-voters-for-row")
@@ -709,6 +931,21 @@ program
   .option("--reporting-geo <s>", "WARD | COUNTY | PRECINCT | DISTRICT | CITY | NONE (with --upsert-initiative or auto-create)")
   .option("--target-signature-count <n>", "Optional goal count for progress reporting", (v) => Number.parseInt(v, 10))
   .option("--initiative-notes <text>", "Optional operator notes stored on petitions.notes")
+  .option("--jurisdiction-type <s>", "petitions.jurisdiction_type (CITY, COUNTY, STATE, DISTRICT, OTHER)")
+  .option("--jurisdiction-name <s>", "petitions.jurisdiction_name")
+  .option("--jurisdiction-city <s>", "petitions.jurisdiction_city")
+  .option("--jurisdiction-county <s>", "petitions.jurisdiction_county")
+  .option("--jurisdiction-state <s>", "petitions.jurisdiction_state (e.g. AR)")
+  .option(
+    "--review-confidence-threshold <n>",
+    "Integer 0–100; default 80; rows below threshold enter review queue",
+    (v) => Number.parseInt(v, 10)
+  )
+  .option(
+    "--confirm-missing-jurisdiction",
+    "Allow import when CITY initiative lacks jurisdiction_city/state in DB",
+    false
+  )
   .option(
     "--auto-create-initiative",
     "With --prepare-import-plan, --execute-import-plan, or direct import: create initiative if missing (requires name + reporting geo when creating)",
@@ -751,6 +988,15 @@ async function main(): Promise<void> {
             ? opts.targetSignatureCount
             : null,
         notes: opts.initiativeNotes?.trim() ?? null,
+        jurisdictionName: opts.jurisdictionName?.trim() ?? null,
+        jurisdictionCity: opts.jurisdictionCity?.trim() ?? null,
+        jurisdictionCounty: opts.jurisdictionCounty?.trim() ?? null,
+        jurisdictionState: opts.jurisdictionState?.trim() ?? null,
+        jurisdictionType: opts.jurisdictionType?.trim() ?? null,
+        reviewConfidenceThreshold:
+          opts.reviewConfidenceThreshold != null && Number.isFinite(opts.reviewConfidenceThreshold)
+            ? opts.reviewConfidenceThreshold
+            : null,
       });
       console.log(
         JSON.stringify(
@@ -952,6 +1198,7 @@ async function main(): Promise<void> {
           ? opts.targetSignatureCount
           : null,
       initiativeNotes: opts.initiativeNotes?.trim() ?? null,
+      confirmMissingJurisdiction: opts.confirmMissingJurisdiction === true,
     });
     console.log(JSON.stringify({ execute_import_plan: true, ...summary }, null, 2));
     return;
@@ -1351,6 +1598,7 @@ async function main(): Promise<void> {
         ? opts.targetSignatureCount
         : null,
     initiativeNotes: opts.initiativeNotes?.trim() ?? null,
+    confirmMissingJurisdiction: opts.confirmMissingJurisdiction === true,
   });
 
   console.log(
