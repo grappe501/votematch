@@ -6,8 +6,8 @@ import { config as loadDotenv } from "dotenv";
  * Load env for the voter matcher CLI.
  * 1. `.env` in the current working directory (typically `petition_match/`).
  * 2. If `VFM_DOTENV_PATH` is set, load that file next (override=true so it wins).
- * 3. Else if `DATABASE_URL` is still missing, try `../RedDirt/.env` then `./RedDirt/.env`
- *    (so a run from `petition_match/` picks up `H:\\SOSWebsite\\RedDirt\\.env` without duplicating secrets).
+ * 3. Else if `DATABASE_URL` is still missing, try optional sibling `.env` paths under `../RedDirt/` and
+ *    `./RedDirt/` (convenience when this repo sits next to a local database app in the same workspace).
  */
 export function loadVfmEnv(): void {
   loadDotenv();

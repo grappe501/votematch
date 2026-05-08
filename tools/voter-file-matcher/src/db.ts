@@ -46,7 +46,7 @@ export function colExpr(qt: string, physical: string): string {
 export function createPool(): pg.Pool {
   const url = process.env.DATABASE_URL?.trim();
   if (!url) {
-    throw new Error("DATABASE_URL is not set (check .env or VFM_DOTENV_PATH / RedDirt fallback).");
+    throw new Error("DATABASE_URL is not set (check .env or VFM_DOTENV_PATH / optional sibling .env paths in env-load).");
   }
   return new pg.Pool({ connectionString: url, max: 8 });
 }

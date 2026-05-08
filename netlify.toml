@@ -1,5 +1,6 @@
-# RED DIRT VOTER MATCH (VoteMatch) — Netlify deploy
-# Build verifies the TypeScript CLI/library; the published site is the static splash in /public.
+# VoteMatch — Netlify static site
+# Publishes only `public/`. No secrets or env vars belong in this file.
+# Build runs typecheck to keep the repo healthy; the landing page does not use DATABASE_URL.
 
 [build]
   command = "npm ci && npm run typecheck"

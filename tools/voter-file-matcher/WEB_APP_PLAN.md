@@ -1,35 +1,36 @@
-# Future Netlify web app (plan only)
+# Public Netlify site: static landing page (plan)
 
-This document describes a **later** hosted UI on Netlify (e.g. **RED DIRT VOTER MATCH** / VoteMatch). **No public web upload is implemented in this repository slice**; operators use the local CLI and gitignored reports first.
+This repository’s **deployed Netlify output** is a **simple static landing page** only (`public/`). It does **not** run the voter matcher, host uploads, show review queues, or connect to a database.
 
-## Top-of-flow form (initiative first)
+## What the landing page includes
 
-Before upload or import, the operator selects or creates the **ballot initiative** (same as `petitions` row):
+- **VoteMatch** name and a short neutral description.
+- **High-level** explanation of what the matching tool does in principle:
+  - spreadsheet-to-voter-file matching (conceptually),
+  - confidence scoring,
+  - review queue workflow (conceptually),
+  - ward/county-style reporting (conceptually),
+  - **local / private** handling of sensitive data (matching is not performed on the public page).
+- Clear note that **actual matching, imports, and reports run locally** (or in any future private environment you control)—**not** on this public page.
+- **Contact** or request-access block, if present in the static HTML.
+- Link to the open repository: **https://github.com/Grappe501/VoteMatch**
 
-1. **Initiative code** (`petition_code`, unique).
-2. **Initiative display name** (`petition_name`).
-3. **Scope**: City / County / Statewide / District / Other (`initiative_scope`).
-4. **Reporting geo**: Ward / County / Precinct / District / City / None (`reporting_geo`) — required for meaningful rollups.
-5. **Target signature count** (optional progress bar).
-6. **Upload** spreadsheet (CSV/XLSX) — server-side parse only.
-7. **Preflight** → **Prepare plan** → **Execute plan** (with explicit confirm).
-8. **Reports dashboard** (summary, ward/county CSVs, workbook, confidence distribution).
-9. **Review queue** (authenticated staff; same semantics as CLI review).
+## Explicitly out of scope for the public landing page
 
-## Goals
+The static site does **not** include and does **not** require:
 
-1. **Authentication** required before any deployment that touches real voter data (e.g. Supabase Auth, SSO, or internal VPN-only deployment).
-2. **Upload** a spreadsheet (CSV/XLSX) through a **server-side** handler only; never send `DATABASE_URL` or other secrets to the browser.
-3. **Preflight** the file (parse, map, QA) and show a safe summary (counts, warnings, no bulk PII in logs).
-4. **Prepare import plan** (guarded plan JSON + optional DB row) and let a human mark it reviewed.
-5. **Execute import plan** (or controlled direct import) with explicit confirmation.
-6. **Show reports** generated server-side: totals, slam-dunk vs needs-review, ward rollups, biggest problems, full CSV download links for operators (not public unless explicitly exported).
-7. **Review unmatched rows one by one**: queue from `batch_review_queue_enriched`, show signer fields only to authenticated staff.
-8. **Search voter source** using the same strategies as `--search-voters-for-row` (parameterized SQL server-side).
-9. **Approve / reject / needs-more-info** via server actions that call the same persistence rules as the CLI (`voter_petition_signatures`, `import_match_reviews`, `voter_petition_signature_events`).
+- Upload spreadsheet UI  
+- Preflight or import-plan UI  
+- Execute-import UI  
+- Review queue UI  
+- Voter search UI  
+- Admin dashboard UI  
+- `DATABASE_URL`, Supabase keys, or OpenAI keys in the browser or in static assets  
+- Instructions to embed production database credentials in Netlify for this landing page  
+- Exposure of generated reports, nonvoter exports, or raw signer data  
 
-## Architecture notes
+## Future (private) application
 
-- **Server-side DB access only** (Netlify Functions, Edge with Postgres pool, or a small API backend).
-- **Never expose `DATABASE_URL`** to the browser or client bundles.
-- **Generated reports** stay private (signed URLs, operator session, or download after auth); do not place under public static assets by default.
+An **authenticated private admin application** may be built later for operators. If so, **database access must remain server-side only** (no secrets in client bundles, no public report URLs without auth).
+
+Technical runbooks, CLI commands, migrations, and operator workflows stay in **`tools/voter-file-matcher/README.md`** and related **local** docs—not on the public landing page.

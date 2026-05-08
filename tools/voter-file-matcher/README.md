@@ -1,5 +1,7 @@
 # Voter file matcher (`tools/voter-file-matcher`)
 
+**Local / private operator tool.** The public Netlify deployment for this repo is a **static landing page** only (`public/`). See the repository root **`LANDING_PAGE.md`** for what the public site includes.
+
 TypeScript CLI and library code under `petition_match/` that:
 
 1. **Parses** CSV or XLSX uploads.
@@ -16,7 +18,7 @@ TypeScript CLI and library code under `petition_match/` that:
 
 1. Load `petition_match/.env` when present.
 2. If **`VFM_DOTENV_PATH`** is set, load that file with **override**.
-3. If **`DATABASE_URL`** is still unset and `VFM_DOTENV_PATH` is unset, try **`../RedDirt/.env`** then **`./RedDirt/.env`** (same variable *names* as RedDirt; never log or print secret values).
+3. If **`DATABASE_URL`** is still unset and `VFM_DOTENV_PATH` is unset, the loader may try additional sibling `.env` paths (see **`src/env-load.ts`**); never log or print secret values.
 
 Only **`DATABASE_URL`** is passed to `pg`. **`DIRECT_URL`** is not used.
 
@@ -32,7 +34,7 @@ Only **`DATABASE_URL`** is passed to `pg`. **`DIRECT_URL`** is not used.
 Example env (paths relative to `petition_match/`):
 
 ```env
-VFM_DOTENV_PATH=../RedDirt/.env
+VFM_DOTENV_PATH=../path/to/your-database.env
 VFM_PROJECT_KEY=sos
 VFM_CANONICAL_TABLE=public."VoterRecord"
 VFM_MATCH_SOURCE_TABLE=public.voter_match_source
@@ -45,8 +47,8 @@ Diagnostics (no DB writes except read-only metadata/column checks):
 ```powershell
 npm run voter-match -- --inspect-voter-source
 npm run voter-match -- --validate-config --validate-db --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json
-npm run voter-match -- --match-readiness --file "H:\SOSWebsite\petition_match\incoming\Petition Mail List Share 1 (1).xlsx" --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json
-npm run voter-match -- --candidate-probe --file "H:\SOSWebsite\petition_match\incoming\Petition Mail List Share 1 (1).xlsx" --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json --limit 25
+npm run voter-match -- --match-readiness --file "./incoming/your-petition-sheet.xlsx" --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json
+npm run voter-match -- --candidate-probe --file "./incoming/your-petition-sheet.xlsx" --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json --limit 25
 ```
 
 ## Creating the voter match source view
@@ -287,7 +289,7 @@ Follow this order before the first **real** petition upload. The fixture is synt
 Set at least:
 
 ```env
-VFM_DOTENV_PATH=../RedDirt/.env
+VFM_DOTENV_PATH=../path/to/your-database.env
 VFM_PROJECT_KEY=sos
 VFM_CANONICAL_TABLE=public.YOUR_REAL_VOTER_TABLE
 # Optional: see "Voter match source layer" above.
@@ -302,7 +304,7 @@ Use the **exact** Postgres table name for your voter roll. If Prisma (or other t
 
 ### 2. Apply the migration
 
-From `H:\SOSWebsite\petition_match`, with **`DATABASE_URL`** available in the shell (e.g. terminal loaded `.env`, or paste into Supabase SQL editor):
+From the **`petition_match/`** repo root, with **`DATABASE_URL`** available in the shell (for example your terminal loaded `.env`, or you paste statements into your host’s SQL editor):
 
 **PowerShell:**
 
@@ -316,7 +318,7 @@ psql $env:DATABASE_URL -f tools/voter-file-matcher/migrations/001_import_matcher
 psql "$DATABASE_URL" -f tools/voter-file-matcher/migrations/001_import_matcher_tables.sql
 ```
 
-Or open the migration file in the **Supabase SQL editor** and run it once.
+Or open the migration file in your **hosted Postgres SQL editor** (if your provider offers one) and run it once.
 
 Then apply **migration 002** (human review queue, audit tables, signature event log, and views). Safe after 001:
 
@@ -426,7 +428,7 @@ Default path: **`tools/voter-file-matcher/reports/{batch_id}/review_queue.csv`**
 
 ```powershell
 npm run voter-match -- --export-review-queue --batch-id <batch_id>
-npm run voter-match -- --export-review-queue --batch-id <batch_id> --out H:\exports\queue.csv
+npm run voter-match -- --export-review-queue --batch-id <batch_id> --out ./exports/queue.csv
 ```
 
 ### Approve a row (manual attach)
@@ -537,19 +539,19 @@ Use this path when the upload matches the **“Petition Mail List Share”** lay
 ### Example preflight
 
 ```powershell
-npm run voter-match -- --preflight-file --file "H:\SOSWebsite\petition_match\incoming\Petition Mail List Share 1 (1).xlsx" --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json
+npm run voter-match -- --preflight-file --file "./incoming/your-petition-sheet.xlsx" --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json
 ```
 
 ### Example dry run
 
 ```powershell
-npm run voter-match -- --file "H:\SOSWebsite\petition_match\incoming\Petition Mail List Share 1 (1).xlsx" --project sos --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json --petition-code JACKSONVILLE_2026 --petition-name "Jacksonville Petition" --source-label "Petition Mail List Share 1" --dry-run
+npm run voter-match -- --file "./incoming/your-petition-sheet.xlsx" --project sos --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json --petition-code EXAMPLE_CODE --petition-name "Example petition" --source-label "Example source label" --dry-run
 ```
 
 ### Example real import
 
 ```powershell
-npm run voter-match -- --file "H:\SOSWebsite\petition_match\incoming\Petition Mail List Share 1 (1).xlsx" --project sos --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json --petition-code JACKSONVILLE_2026 --petition-name "Jacksonville Petition" --source-label "Petition Mail List Share 1"
+npm run voter-match -- --file "./incoming/your-petition-sheet.xlsx" --project sos --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json --petition-code EXAMPLE_CODE --petition-name "Example petition" --source-label "Example source label"
 ```
 
 ### Example post-import review
