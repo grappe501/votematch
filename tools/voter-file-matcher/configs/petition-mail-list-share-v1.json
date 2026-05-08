@@ -1,0 +1,73 @@
+{
+  "profileName": "petition-mail-list-share-v1",
+  "description": "Petition mail/signature list spreadsheet profile",
+  "sheetName": "Sheet1",
+  "headerRow": 1,
+  "dataStartRow": 2,
+  "canonicalDatabase": {
+    "table": "public.VoterRecord",
+    "columns": {
+      "id": "id",
+      "voter_id": "voterFileKey",
+      "external_voter_id": "voterFileKey",
+      "state_voter_id": "voterFileKey",
+      "first_name": "firstName",
+      "last_name": "lastName",
+      "county": "countySlug",
+      "city": "city"
+    }
+  },
+  "headerAliases": {
+    "first_name": ["PRINTED FIRST NAME", "First Name", "Printed First Name"],
+    "last_name": ["PRINTED LAST NAME", "Last Name", "Printed Last Name"],
+    "birth_month": ["BIRTH MONTH", "Birth Month"],
+    "birth_day": ["BIRTH DAY", "Birth Day"],
+    "birth_year": ["BIRTH YEAR", "Birth Year"],
+    "city": ["CITY", "City"],
+    "state": ["STATE", "State"],
+    "zip": ["ZIPCODE", "ZIP", "Zip", "Zip Code", "Postal Code"],
+    "signed_at": ["DATE SIGNED", "Date Signed", "Signature Date"],
+    "notes": ["NOTES", "Notes"]
+  },
+  "columnPositions": {
+    "F": "address"
+  },
+  "normalization": {
+    "combineBirthDateParts": true,
+    "birthMonthField": "birth_month",
+    "birthDayField": "birth_day",
+    "birthYearField": "birth_year",
+    "signedAtMayBeExcelSerial": true,
+    "treatNAAsEmpty": true,
+    "defaultState": "AR",
+    "expectedPrimaryCity": "jacksonville",
+    "uppercaseState": true
+  },
+  "qa": {
+    "flagMissingName": true,
+    "flagMissingAddress": true,
+    "flagMissingCity": true,
+    "flagMissingState": true,
+    "flagMissingZip": true,
+    "flagInvalidBirthDate": true,
+    "flagFutureSignedAt": true,
+    "flagNonJacksonvilleCity": true,
+    "flagNotesPresent": true,
+    "flagDuplicateRowsWithinFile": true
+  },
+  "matching": {
+    "tierSet": "petition_mail",
+    "strongFields": ["first_name", "last_name", "birth_date", "city", "zip"],
+    "fallbackFields": ["first_name", "last_name", "birth_year", "city", "zip", "address"]
+  },
+  "validation": {
+    "requiredHeaderFields": [
+      "first_name",
+      "last_name",
+      "city",
+      "state",
+      "zip",
+      "address"
+    ]
+  }
+}

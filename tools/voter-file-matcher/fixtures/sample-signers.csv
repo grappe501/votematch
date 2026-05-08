@@ -1,0 +1,6 @@
+Voter ID,First Name,Last Name,Address,City,County,State,Zip,Signed At
+FAKE-VRN-JAX-001,TestFirst,TestFixtureJax,100 Demo St,Jacksonville,pulaski,AR,32202,2026-01-15
+FAKE-VRN-SHER-002,Sample,ExampleFixture,200 Fixture Ave,Sherwood,pulaski,AR,72076,2026-01-16
+FAKE-NO-MATCH-ZZZ-999,ZzzNo,MatchHere,999 Nonexistent Rd,Nomatchville,nowhere,AR,99999,2026-01-17
+,TestIncompleteOnly,,,,,,,,
+FAKE-VRN-JAX-001,TestFirst,TestFixtureJax,100 Demo St,Jacksonville,pulaski,AR,32202,2026-01-18

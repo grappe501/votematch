@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RED DIRT VOTER MATCH</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #1a120d;
+        --fg: #f4ede6;
+        --accent: #c45c26;
+        --muted: #a89888;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: radial-gradient(ellipse 120% 80% at 50% 0%, #2d1f16 0%, var(--bg) 55%);
+        color: var(--fg);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+        text-align: center;
+      }
+      h1 {
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        font-size: clamp(1.5rem, 5vw, 2.25rem);
+        margin: 0 0 0.5rem;
+      }
+      p {
+        max-width: 36rem;
+        color: var(--muted);
+        line-height: 1.6;
+        margin: 0.75rem 0;
+      }
+      .tag {
+        color: var(--accent);
+        font-size: 0.85rem;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        margin-bottom: 1rem;
+      }
+      code {
+        font-size: 0.9rem;
+        background: rgba(255, 255, 255, 0.06);
+        padding: 0.2rem 0.45rem;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="tag">VoteMatch</div>
+    <h1>RED DIRT VOTER MATCH</h1>
+    <p>
+      Operator tooling lives in this repository: petition intake, voter matching, initiative rollups, and
+      reports. Configure <code>DATABASE_URL</code> and related env vars only in Netlify environment settings
+      or your secure host — never in the browser bundle.
+    </p>
+    <p>See <code>tools/voter-file-matcher/README.md</code> for the CLI runbook.</p>
+  </body>
+</html>

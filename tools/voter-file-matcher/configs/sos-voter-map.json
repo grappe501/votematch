@@ -1,0 +1,31 @@
+{
+  "canonicalDatabase": {
+    "table": "public.VoterRecord",
+    "columns": {
+      "id": "id",
+      "voter_id": "voterFileKey",
+      "external_voter_id": "voterFileKey",
+      "state_voter_id": "voterFileKey",
+      "first_name": "firstName",
+      "last_name": "lastName",
+      "county": "countySlug",
+      "city": "city"
+    }
+  },
+  "headerAliases": {
+    "voter_id": ["Voter ID", "VOTER_ID", "VoterId", "voter_id", "VRN", "SOS ID"],
+    "external_voter_id": ["External Voter ID", "External ID", "EXT_VOTER_ID"],
+    "state_voter_id": ["State Voter ID", "STATE_VOTER_ID", "SOS_VRN"],
+    "first_name": ["First Name", "first", "fname", "given_name", "FIRST_NAME"],
+    "last_name": ["Last Name", "last", "lname", "surname", "LAST_NAME"],
+    "full_name": ["Name", "Full Name", "Signer Name", "FULL_NAME"],
+    "birth_date": ["Birth Date", "DOB", "Date of Birth", "BIRTH_DATE"],
+    "birth_year": ["Birth Year", "YOB", "Year of Birth", "BIRTH_YEAR"],
+    "address": ["Address", "Street", "ADDRESS", "ADDRESS1", "Residence Address"],
+    "city": ["City", "Residence City", "Signer City", "CITY"],
+    "county": ["County", "Residence County", "Signer County", "COUNTY"],
+    "state": ["State", "ST", "STATE"],
+    "zip": ["Zip", "ZIP", "Zip Code", "Postal Code", "ZIP5"],
+    "signed_at": ["Signed At", "Signature Date", "Date Signed", "SIGN_DATE"]
+  }
+}

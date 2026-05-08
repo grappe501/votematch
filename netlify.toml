@@ -1,0 +1,9 @@
+# RED DIRT VOTER MATCH (VoteMatch) — Netlify deploy
+# Build verifies the TypeScript CLI/library; the published site is the static splash in /public.
+
+[build]
+  command = "npm ci && npm run typecheck"
+  publish = "public"
+
+[build.environment]
+  NODE_VERSION = "20"

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+incoming/
+*.xlsx
+!tools/voter-file-matcher/fixtures/*.xlsx
+tools/voter-file-matcher/reports/
+tools/voter-file-matcher/incoming/
+!tools/voter-file-matcher/incoming/README.md

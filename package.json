@@ -1,0 +1,27 @@
+{
+  "name": "petition-match",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone voter file matcher workspace (Netlify/GitHub branch friendly).",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "voter-match": "tsx tools/voter-file-matcher/src/cli.ts",
+    "voter-match:fixture:dry-run": "npm run voter-match -- --file ./tools/voter-file-matcher/fixtures/sample-signers.csv --project sos --map ./tools/voter-file-matcher/configs/sos-voter-map.json --petition-code FIXTURE_TEST --petition-name FixtureTestPetition --source-label fixture --dry-run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "commander": "^13.1.0",
+    "csv-parse": "^5.6.0",
+    "dotenv": "^16.4.7",
+    "pg": "^8.13.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

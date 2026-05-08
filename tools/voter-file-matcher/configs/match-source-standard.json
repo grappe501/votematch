@@ -1,0 +1,27 @@
+{
+  "profileName": "match-source-standard",
+  "description": "Standard voter match source table/view contract for VFM_MATCH_SOURCE_TABLE",
+  "tableEnv": "VFM_MATCH_SOURCE_TABLE",
+  "requiredColumns": ["voter_id", "first_name_norm", "last_name_norm"],
+  "recommendedColumns": [
+    "birth_date",
+    "birth_year",
+    "address_norm",
+    "city_norm",
+    "state",
+    "zip5",
+    "county_norm",
+    "ward_norm",
+    "district_norm",
+    "precinct_norm"
+  ],
+  "matchingTiers": {
+    "petition_mail": [
+      ["voter_id"],
+      ["first_name_norm", "last_name_norm", "birth_date"],
+      ["first_name_norm", "last_name_norm", "birth_year", "address_norm", "zip5"],
+      ["first_name_norm", "last_name_norm", "birth_year", "city_norm", "zip5"],
+      ["first_name_norm", "last_name_norm", "city_norm"]
+    ]
+  }
+}
