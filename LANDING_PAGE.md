@@ -1,4 +1,4 @@
-# VoteMatch — public web app (Netlify)
+# Signature Match — public web app (Netlify)
 
 ## Purpose
 
@@ -26,7 +26,7 @@ Open **http://localhost:3000** (upload), **http://localhost:3000/reports** (aggr
 
 ## Deployment
 
-- **Netlify** with **`@netlify/plugin-nextjs`** (see `netlify.toml`).
+- **Netlify** with **`@netlify/plugin-nextjs`** (see `netlify.toml`). The app is **Next.js**, not a legacy static site: the publish directory must be **`.next`**, not **`public/`**. The `public/` directory is only for static assets the framework serves; it is not the deploy output root.
 - **Repository:** https://github.com/Grappe501/VoteMatch
 
 ## Copy tone for marketing pages

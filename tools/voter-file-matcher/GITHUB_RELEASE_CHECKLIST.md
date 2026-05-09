@@ -1,6 +1,6 @@
 # GitHub / release checklist (manual)
 
-Use this before publishing the **VoteMatch** repo or connecting Netlify. **Documentation only** (no auto-push script).
+Use this before publishing the **Signature Match** repo or connecting Netlify. **Documentation only** (no auto-push script).
 
 **Repository:** https://github.com/Grappe501/VoteMatch  
 
@@ -14,9 +14,12 @@ Use this before publishing the **VoteMatch** repo or connecting Netlify. **Docum
 - **Sanitized docs** (no real paths, keys, or PII)  
 - **`.env.example`** (placeholders only; see note in that file)  
 - **`lib/reviewOperatorToken.ts`** / **`lib/operatorAuth.server.ts`** (review gate helpers; no secrets in source)  
+- **`app/operator-access/`** (temporary httpOnly cookie helper; no token values in UI after save)  
 - **`LANDING_PAGE.md`**, **`LANDING_PAGE_COPY.md`**, root **`README.md`**, and this checklist  
 
 For **Netlify**, configure server env vars in the dashboard: **`DATABASE_URL`**, **`VFM_*`**, **`VFM_UPLOAD_TOKEN`**, and (if using OCR) **`OPENAI_API_KEY`** + **`OPENAI_OCR_MODEL`** as server-side / Functions secrets. Never commit real values for those.
+
+In the Netlify UI, do **not** set **Publish directory** to **`public`** for this site. Root **`netlify.toml`** sets **`publish = ".next"`** with **`@netlify/plugin-nextjs`** so the build uses the Next.js output, not a static `public/` folder (which would break the plugin with “publish directory was not found at …/public”).
 
 ---
 
@@ -70,4 +73,4 @@ git push -u origin main
 1. Apply **`migrations/008_ocr_image_intake.sql`** to the target database.  
 2. Set **`OPENAI_API_KEY`** and **`OPENAI_OCR_MODEL`** in Netlify (server/Functions scope only).  
 3. Set **`VFM_UPLOAD_TOKEN`** and confirm **`GET /api/health`** returns booleans only (`openai_configured`, `ocr_model_configured`, `ocr_enabled`).  
-4. Confirm OCR review URLs are shared only with authorized operators (tokens in query strings are sensitive).  
+4. Confirm OCR review URLs are shared only with authorized operators; prefer **`/operator-access`** over embedding **`?token=`** in links.  

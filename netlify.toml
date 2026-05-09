@@ -1,9 +1,13 @@
-# VoteMatch — Next.js on Netlify (server routes for ingest + DB-backed reports).
-# Set DATABASE_URL / VFM_* in Netlify site environment (never commit .env).
-# VFM_UPLOAD_TOKEN is required in production for POST /api/ingest.
+# Signature Match — Next.js on Netlify (App Router, server routes, @netlify/plugin-nextjs).
+# This is not a static site: do not set the publish directory to public/ in the UI or here.
+# Build output for the Next adapter is .next (see publish below).
+#
+# Secrets only in Netlify → Site configuration → Environment variables (never in this file):
+# DATABASE_URL, VFM_*, VFM_UPLOAD_TOKEN, OPENAI_* as needed.
 
 [build]
   command = "npm ci && npm run build"
+  publish = ".next"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
