@@ -1,6 +1,27 @@
 # Voter file matcher (`tools/voter-file-matcher`)
 
-**Local / private operator tool.** The public Netlify deployment for this repo is a **static landing page** only (`public/`). See the repository root **`LANDING_PAGE.md`** for what the public site includes.
+**Matcher library + CLI.** The repo root also runs a **Next.js** app (upload + `/reports`); see **`LANDING_PAGE.md`** and **`README.md`** at the repository root for web deployment and env vars (`VFM_UPLOAD_TOKEN`, etc.).
+
+## Local database connection
+
+- The **Netlify landing page** does **not** connect to Postgres or read `DATABASE_URL`.
+- The **local VoteMatch CLI** does connect to your database for imports, matching, and review helpers.
+- Point the CLI at your app database credentials by setting in `petition_match/.env`:
+
+  `VFM_DOTENV_PATH=../RedDirt/.env`
+
+  so `DATABASE_URL` (and any other shared vars) load from that file **with override** after `petition_match/.env`. **Do not** copy `DATABASE_URL` into documentation, chat, or commits.
+- Run CLI commands from the repo root:
+
+  `H:\SOSWebsite\petition_match`
+
+- Quick checks (no secret values printed):
+
+```powershell
+npm run voter-match -- --env-status
+npm run voter-match -- --db-ping
+npm run voter-match -- --validate-config --validate-db --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json
+```
 
 TypeScript CLI and library code under `petition_match/` that:
 
@@ -17,8 +38,8 @@ TypeScript CLI and library code under `petition_match/` that:
 `src/cli.ts` calls `loadVfmEnv()` before reading `process.env`:
 
 1. Load `petition_match/.env` when present.
-2. If **`VFM_DOTENV_PATH`** is set, load that file with **override**.
-3. If **`DATABASE_URL`** is still unset and `VFM_DOTENV_PATH` is unset, the loader may try additional sibling `.env` paths (see **`src/env-load.ts`**); never log or print secret values.
+2. If **`VFM_DOTENV_PATH`** is set (recommended: **`../RedDirt/.env`** when this repo sits next to the RedDirt app), load that file with **override** so **`DATABASE_URL`** and other DB vars come from there—without copying secrets into `petition_match/.env`.
+3. If **`DATABASE_URL`** is still unset and `VFM_DOTENV_PATH` is unset, the loader may try optional sibling `.env` paths (see **`src/env-load.ts`**). Never log or print secret values.
 
 Only **`DATABASE_URL`** is passed to `pg`. **`DIRECT_URL`** is not used.
 
@@ -34,7 +55,7 @@ Only **`DATABASE_URL`** is passed to `pg`. **`DIRECT_URL`** is not used.
 Example env (paths relative to `petition_match/`):
 
 ```env
-VFM_DOTENV_PATH=../path/to/your-database.env
+VFM_DOTENV_PATH=../RedDirt/.env
 VFM_PROJECT_KEY=sos
 VFM_CANONICAL_TABLE=public."VoterRecord"
 VFM_MATCH_SOURCE_TABLE=public.voter_match_source
@@ -289,7 +310,7 @@ Follow this order before the first **real** petition upload. The fixture is synt
 Set at least:
 
 ```env
-VFM_DOTENV_PATH=../path/to/your-database.env
+VFM_DOTENV_PATH=../RedDirt/.env
 VFM_PROJECT_KEY=sos
 VFM_CANONICAL_TABLE=public.YOUR_REAL_VOTER_TABLE
 # Optional: see "Voter match source layer" above.

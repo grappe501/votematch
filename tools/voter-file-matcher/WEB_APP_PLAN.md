@@ -1,36 +1,19 @@
-# Public Netlify site: static landing page (plan)
+# VoteMatch web app (current)
 
-This repository’s **deployed Netlify output** is a **simple static landing page** only (`public/`). It does **not** run the voter matcher, host uploads, show review queues, or connect to a database.
+## What ships today
 
-## What the landing page includes
+- **Next.js** on **Netlify** (`@netlify/plugin-nextjs`), not a static-only HTML drop.
+- **Home (`/`)** — spreadsheet upload → `POST /api/ingest` → same **`runFullImport`** pipeline as the CLI (chunked staging, matching, signatures, local report dir on the server).
+- **Reports (`/reports`)** — aggregate dashboard: totals (import rows, matched / not found / multiple / weak / errors, under-80, review queue, jurisdiction, duplicates, nonvoters), initiatives table, last 50 batches, confidence buckets, problem counts, ward/county rollups when views/data exist, migration warnings when optional columns/views are missing. Drilldowns: **`/reports/[batchId]`**, **`/initiatives/[petitionCode]`** (still aggregate-only; no raw signer names or addresses in HTML).
+- **Health (`/api/health`)** — `ok`, `database_configured`, `upload_token_configured`, `node_env`, `app_mode`; never returns connection strings or row data.
+- **Secrets** — `DATABASE_URL`, `VFM_*`, and **`VFM_UPLOAD_TOKEN`** only in server environment. Production uploads require Bearer token.
 
-- **VoteMatch** name and a short neutral description.
-- **High-level** explanation of what the matching tool does in principle:
-  - spreadsheet-to-voter-file matching (conceptually),
-  - confidence scoring,
-  - review queue workflow (conceptually),
-  - ward/county-style reporting (conceptually),
-  - **local / private** handling of sensitive data (matching is not performed on the public page).
-- Clear note that **actual matching, imports, and reports run locally** (or in any future private environment you control)—**not** on this public page.
-- **Contact** or request-access block, if present in the static HTML.
-- Link to the open repository: **https://github.com/Grappe501/VoteMatch**
+## Roadmap (not built yet)
 
-## Explicitly out of scope for the public landing page
+- **Handwritten sheets (JPG/PNG)** — needs OCR + human QA before row-level normalization; do not promise legal validity from OCR alone.
+- **Richer reporting widgets** — ward/county drilldowns from existing SQL views, review-queue summaries, export job triggers—extend `/reports` and/or add authenticated operator routes.
+- **Stronger auth** — move beyond shared upload token to signed-in operators if the site stays public-facing.
 
-The static site does **not** include and does **not** require:
+## CLI
 
-- Upload spreadsheet UI  
-- Preflight or import-plan UI  
-- Execute-import UI  
-- Review queue UI  
-- Voter search UI  
-- Admin dashboard UI  
-- `DATABASE_URL`, Supabase keys, or OpenAI keys in the browser or in static assets  
-- Instructions to embed production database credentials in Netlify for this landing page  
-- Exposure of generated reports, nonvoter exports, or raw signer data  
-
-## Future (private) application
-
-An **authenticated private admin application** may be built later for operators. If so, **database access must remain server-side only** (no secrets in client bundles, no public report URLs without auth).
-
-Technical runbooks, CLI commands, migrations, and operator workflows stay in **`tools/voter-file-matcher/README.md`** and related **local** docs—not on the public landing page.
+Local runbooks, migrations, and advanced review commands remain in **`README.md`** (this folder). The web app reuses matcher **TypeScript** on the server; it does not replace the CLI for bulk exports or migration apply.

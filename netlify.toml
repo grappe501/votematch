@@ -1,10 +1,12 @@
-# VoteMatch — Netlify static site
-# Publishes only `public/`. No secrets or env vars belong in this file.
-# Build runs typecheck to keep the repo healthy; the landing page does not use DATABASE_URL.
+# VoteMatch — Next.js on Netlify (server routes for ingest + DB-backed reports).
+# Set DATABASE_URL / VFM_* in Netlify site environment (never commit .env).
+# VFM_UPLOAD_TOKEN is required in production for POST /api/ingest.
 
 [build]
-  command = "npm ci && npm run typecheck"
-  publish = "public"
+  command = "npm ci && npm run build"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
 
 [build.environment]
   NODE_VERSION = "20"

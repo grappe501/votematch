@@ -25,6 +25,7 @@
     "birth_year": ["BIRTH YEAR", "Birth Year"],
     "city": ["CITY", "City"],
     "state": ["STATE", "State"],
+    "address": ["STREET ADDRESS", "ADDRESS", "RESIDENTIAL ADDRESS", "Street Address", "Street"],
     "zip": ["ZIPCODE", "ZIP", "Zip", "Zip Code", "Postal Code"],
     "signed_at": ["DATE SIGNED", "Date Signed", "Signature Date"],
     "notes": ["NOTES", "Notes"]

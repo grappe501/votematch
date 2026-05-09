@@ -1,9 +1,14 @@
 node_modules/
 dist/
+.next/
+*.tsbuildinfo
 .env
+.env.*
+!.env.example
 *.log
 .DS_Store
 incoming/
+spreadsheets/
 *.xlsx
 !tools/voter-file-matcher/fixtures/*.xlsx
 tools/voter-file-matcher/reports/

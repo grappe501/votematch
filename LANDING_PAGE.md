@@ -1,29 +1,34 @@
-# VoteMatch — public landing page (Netlify)
+# VoteMatch — public web app (Netlify)
 
 ## Purpose
 
-This repository includes a **public informational landing page** only. The page is **static HTML/assets** served from **`public/`** via **Netlify**.
+This repository ships a **Next.js** application (not a static-only site): **upload**, **server-side import** into Postgres using the existing matcher pipeline, and a **Reports** page with aggregate metrics.
 
-It explains VoteMatch at a high level. It does **not** run matching, store voter data, or require any API keys.
+Handwritten page photos (**JPG/PNG**) are **not** converted yet; that requires a separate OCR/review pipeline. Spreadsheets **CSV / XLSX / XLS** use the Petition Mail List Share profile by default (`VFM_SOURCE_PROFILE_PATH`).
 
-## What the public site does not do
+## Security
 
-- **No** live voter matching on the public site.  
-- **No** storage of real voter or signer data in Netlify’s static hosting.  
-- **No** `DATABASE_URL`, Supabase keys, or **OpenAI API key** required for the static landing page.  
-- **No** spreadsheet uploads, preflight, import execution, review UI, or report downloads on the public page.
+- **`DATABASE_URL`** and **`VFM_DOTENV_PATH`** exist only on the **server** (Netlify environment or local `.env`). They are never exposed to the browser bundle.
+- **`VFM_UPLOAD_TOKEN`**: In **production**, uploads require `Authorization: Bearer <token>`. Set a long random value in Netlify. Without it, `POST /api/ingest` returns 503.
+- Do not commit real spreadsheets, reports, or `.env` files.
 
-The static landing page does **not** require an **OpenAI API key**. If AI-assisted features are added later, any OpenAI API key must be used **only from server-side code** and must **never** be exposed in browser JavaScript.
+## Local development
 
-## Where the real tool lives
+```bash
+npm ci
+cp .env.example .env   # then edit; point VFM_DOTENV_PATH at RedDirt/.env as needed
+npm run dev
+```
 
-**Local matching, database access, SQL migrations, and reporting** live under **`tools/voter-file-matcher/`** and are documented for operators in **`tools/voter-file-matcher/README.md`**. That workflow is **private / local** (or a future secured server), not part of the public static site.
+Open **http://localhost:3000** (upload), **http://localhost:3000/reports** (aggregate dashboard), **http://localhost:3000/api/health** (safe status JSON). Initiative and batch drilldowns live at `/initiatives/[code]` and `/reports/[batchId]`—still aggregate-only, no raw signer rows.
+
+**Netlify:** do not set `VFM_DOTENV_PATH`. Set `DATABASE_URL`, `VFM_UPLOAD_TOKEN`, and other `VFM_*` values in the site environment. `OPENAI_API_KEY` is optional and not used for CSV/XLSX matching or the public reports UI.
 
 ## Deployment
 
-- **Target:** Netlify (static publish directory: **`public/`**; see **`netlify.toml`** if present).  
-- **Repository:** https://github.com/Grappe501/VoteMatch  
+- **Netlify** with **`@netlify/plugin-nextjs`** (see `netlify.toml`).
+- **Repository:** https://github.com/Grappe501/VoteMatch
 
-## Copy draft
+## Copy tone for marketing pages
 
-See **`LANDING_PAGE_COPY.md`** for neutral public wording you can paste into the static page.
+See **`LANDING_PAGE_COPY.md`** for neutral public wording where you want non-technical language.

@@ -1,6 +1,6 @@
 # VoteMatch — public copy draft (neutral)
 
-Use this text on the static landing page. Keep tone **administrative and neutral**.
+Use this text on the public site (Next.js home page or marketing blurbs). Keep tone **administrative and neutral**.
 
 ---
 

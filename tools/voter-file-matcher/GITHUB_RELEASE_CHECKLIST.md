@@ -6,17 +6,16 @@ Use this before publishing the **VoteMatch** repo or connecting Netlify. **Docum
 
 ---
 
-## A. Safe to publish (landing page + repo)
+## A. Safe to publish (repo + Next app)
 
-- **Source code** (TypeScript, HTML/CSS in `public/`, etc.)  
-- **Landing page** static files under **`public/`**  
+- **Source code** (`app/`, `components/`, `tools/voter-file-matcher/src/`, etc.)  
 - **`package.json`** / **`package-lock.json`**  
 - **SQL migrations** under `tools/voter-file-matcher/migrations/` (schema definitions, no live data)  
 - **Sanitized docs** (no real paths, keys, or PII)  
 - **`.env.example`** (placeholders only; see note in that file)  
 - **`LANDING_PAGE.md`**, **`LANDING_PAGE_COPY.md`**, root **`README.md`**, and this checklist  
 
-For a **static Netlify landing page**, **do not** configure production secrets in Netlify unless you later add **server-side** functions that need them. The static site does not use `DATABASE_URL`, Supabase keys, or OpenAI keys.
+For **Netlify**, configure server env vars in the dashboard: **`DATABASE_URL`**, **`VFM_*`**, and **`VFM_UPLOAD_TOKEN`** (production ingest). Never commit real values for those.
 
 ---
 
@@ -26,6 +25,7 @@ For a **static Netlify landing page**, **do not** configure production secrets i
 - **`DATABASE_URL`** or other live database connection strings  
 - **`SUPABASE_SERVICE_ROLE_KEY`** or other Supabase secrets  
 - **`OPENAI_API_KEY`** or other third-party API secrets  
+- **`VFM_UPLOAD_TOKEN`** (real upload bearer token)  
 - **Real spreadsheets** (petition sheets, voter extracts)  
 - **`incoming/`** real files (keep `incoming/` local; use `.gitignore`)  
 - **Generated reports** under `tools/voter-file-matcher/reports/`  

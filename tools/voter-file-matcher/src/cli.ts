@@ -6,6 +6,7 @@ import { loadVfmEnv } from "./env-load.js";
 loadVfmEnv();
 
 import { createPool } from "./db.js";
+import { printEnvStatus, runDbPing } from "./envDiagnostics.js";
 import { buildCanonicalColumnMap } from "./matcher.js";
 import { loadHeaderMapFile } from "./headerMap.js";
 import { runPreflightOnSheet } from "./preflight.js";
@@ -143,6 +144,8 @@ type Opts = {
   chunkSize?: number;
   validateConfig?: boolean;
   validateDb?: boolean;
+  envStatus?: boolean;
+  dbPing?: boolean;
   inspectVoterSource?: boolean;
   matchReadiness?: boolean;
   candidateProbe?: boolean;
@@ -817,6 +820,8 @@ program
   .option("--chunk-size <n>", "Rows per chunk", (v) => Number.parseInt(v, 10))
   .option("--validate-config", "Validate env + map file only (no DB unless --validate-db)", false)
   .option("--validate-db", "With --validate-config, also verify tables and canonical table in DB", false)
+  .option("--env-status", "Print safe env keys/paths only (no DATABASE_URL or secrets)", false)
+  .option("--db-ping", "Test DATABASE_URL with a trivial query (never prints the URL)", false)
   .option("--inspect-voter-source", "List resolved table columns + standard match-source contract (no row data)", false)
   .option("--match-readiness", "Preflight file + DB match-source checks (no writes)", false)
   .option("--candidate-probe", "Sample rows: run match queries, aggregate counts only (no writes)", false)
@@ -962,6 +967,16 @@ type Prepared = {
 
 async function main(): Promise<void> {
   const opts = program.opts() as Opts;
+
+  if (opts.envStatus === true) {
+    printEnvStatus();
+    return;
+  }
+
+  if (opts.dbPing === true) {
+    await runDbPing();
+    return;
+  }
 
   if (opts.upsertInitiative === true) {
     const code = (opts.petitionCode ?? process.env.VFM_PETITION_CODE)?.trim();
