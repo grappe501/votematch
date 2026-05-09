@@ -4,7 +4,7 @@
 
 This repository ships a **Next.js** application (not a static-only site): **upload**, **server-side import** into Postgres using the existing matcher pipeline, and a **Reports** page with aggregate metrics.
 
-Handwritten page photos (**JPG/PNG**) are **not** converted yet; that requires a separate OCR/review pipeline. Spreadsheets **CSV / XLSX / XLS** use the Petition Mail List Share profile by default (`VFM_SOURCE_PROFILE_PATH`).
+**JPEG/PNG** petition photos use **server-side OCR** (`POST /api/ingest-image`, OpenAI vision) with **mandatory human review** before rows enter the normal import/match pipeline. Spreadsheets **CSV / XLSX / XLS** use the Petition Mail List Share profile by default (`VFM_SOURCE_PROFILE_PATH`) and do not require OpenAI.
 
 ## Security
 

@@ -79,6 +79,7 @@ export {
   runSelectReviewCandidate,
   runPlaceNonvoter,
   runNonvoterReport,
+  getLatestMatchForRow,
 } from "./review.js";
 export type { ReviewQueueRow, BatchSummaryJson } from "./review.js";
 export {
@@ -170,6 +171,12 @@ export {
 } from "./importPlan.js";
 export { discoverVoterSchema, fetchTableColumnsMetadata, classifyColumnName, listPublicTables } from "./schemaDiscovery.js";
 export {
+  discoverLikelyVoterTables,
+  inspectTableColumnsMetadata,
+  buildMatchSourceSuggestSummary,
+} from "./voterSourceDiscovery.js";
+export type { LikelyVoterTableRow, InspectedColumnRow, MatchSourceSuggestColumnSummary } from "./voterSourceDiscovery.js";
+export {
   evaluateJurisdictionStatus,
   evaluateSignerJurisdictionStatus,
   zip5Equal,
@@ -197,6 +204,82 @@ export {
   loadMatchSourcePlan,
   readSqlFile,
 } from "./sqlEmitter.js";
+export type { OcrExtractedRowJson, OcrPetitionExtractionResult, PetitionOcrContext } from "./ocrTypes.js";
+export { parseOcrExtractionJson } from "./ocrTypes.js";
+export { extractPetitionRowsFromImage } from "./ocrOpenAI.js";
+export {
+  computeSha256Hex,
+  ensureOcrIncomingDir,
+  getOcrMaxBytes,
+  saveOcrUploadFile,
+  validateOcrImageMime,
+} from "./ocrStorage.js";
+export {
+  assertPetitionExists,
+  buildPetitionMailCsvFromOcrRows,
+  bulkConfirmOcrRowsForImport,
+  confirmOcrRowsToImport,
+  createOcrImageBatch,
+  createOcrImageFile,
+  getOcrBatchMeta,
+  getOcrBatchSummary,
+  getOcrRowsForReview,
+  ingestImageAndRunOcr,
+  runOcrForImageBatch,
+  saveExtractedRows,
+} from "./ocrPipeline.js";
+export type { ConfirmOcrImportResult, OcrBatchSummaryRow } from "./ocrPipeline.js";
+export {
+  confirmAllReviewedRows,
+  confirmOcrRow,
+  getOcrReviewProgress,
+  listOcrRowsNeedingReview,
+  rejectOcrRow,
+  updateOcrRowCorrection,
+} from "./ocrReview.js";
+export type { OcrRowUpdateFields } from "./ocrReview.js";
+export {
+  checkUploadToken,
+  readBearerToken,
+  uploadTokenExpected,
+  getOperatorTokenFromRequest,
+  checkOperatorReviewToken,
+  operatorReviewTokenConfigured,
+} from "./uploadAuth.js";
+export {
+  UUID_REGEX,
+  PETITION_CODE_REGEX,
+  isValidUuid,
+  isValidPetitionCode,
+  listReportBatches,
+  listInitiativesForReports,
+  resolveHeaderMapPathForWeb,
+} from "./webReports.js";
+export type { ReportBatchListRow, ReportBatchListFilters, InitiativeListRow } from "./webReports.js";
+export {
+  resolveReviewCanonicalContext,
+  webReviewOperatorLabel,
+  fetchReviewQueueRow,
+  fetchReviewQueueTableRows,
+  fetchCandidatesForRowPageUi,
+  ensureReviewCandidateSnapshotsForRow,
+  safeRunReviewProgress,
+  fetchReviewLandingData,
+  webRunSelectReviewCandidate,
+  webRunMoreReviewCandidates,
+  webRunReviewNext,
+  webRunPlaceNonvoter,
+  webRunReject,
+  webRunNeedsMoreInfo,
+} from "./webReview.js";
+export type {
+  WebReviewCanonicalContext,
+  ReviewCandidateUi,
+  ReviewQueueTableRowUi,
+  ReviewLandingBatchUi,
+  ReviewLandingInitiativeUi,
+  ReviewLandingCounts,
+} from "./webReview.js";
 export {
   normalizeWhitespace,
   normalizeName,

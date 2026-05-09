@@ -1,12 +1,12 @@
-import { randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { loadVfmEnv } from "../../../tools/voter-file-matcher/src/env-load";
 import { loadHeaderMapFile } from "../../../tools/voter-file-matcher/src/headerMap";
-import { imageBufferToPetitionMailXlsx } from "../../../tools/voter-file-matcher/src/imageSheetExtract";
 import { runFullImport } from "../../../tools/voter-file-matcher/src/importRunner";
+import { checkUploadToken } from "../../../tools/voter-file-matcher/src/uploadAuth";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -20,11 +20,6 @@ const ALLOWED_MIME = new Set([
   "application/octet-stream",
 ]);
 
-function checkBearer(request: Request, token: string): boolean {
-  const h = request.headers.get("authorization");
-  return h === `Bearer ${token}`;
-}
-
 export async function POST(request: Request) {
   loadVfmEnv();
 
@@ -35,7 +30,7 @@ export async function POST(request: Request) {
       { status: 503 }
     );
   }
-  if (token && !checkBearer(request, token)) {
+  if (token && !checkUploadToken(request)) {
     return NextResponse.json({ error: "Unauthorized (missing or invalid upload token)." }, { status: 401 });
   }
 
@@ -71,15 +66,18 @@ export async function POST(request: Request) {
   const mime = (file.type || "application/octet-stream").toLowerCase();
   const isImage = mime.startsWith("image/");
 
-  if (!isImage) {
-    if (!ALLOWED_MIME.has(mime) && !mime.includes("sheet") && !mime.includes("excel") && mime !== "text/csv") {
-      return NextResponse.json({ error: `Unsupported content type: ${mime}` }, { status: 415 });
-    }
-  } else if (!["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif"].includes(mime)) {
+  if (isImage) {
     return NextResponse.json(
-      { error: `Unsupported image type: ${mime}. Use JPEG, PNG, or WebP.` },
+      {
+        error:
+          "Images must use POST /api/ingest-image (OCR extraction, human review, then import into the matcher pipeline).",
+      },
       { status: 415 }
     );
+  }
+
+  if (!ALLOWED_MIME.has(mime) && !mime.includes("sheet") && !mime.includes("excel") && mime !== "text/csv") {
+    return NextResponse.json({ error: `Unsupported content type: ${mime}` }, { status: 415 });
   }
 
   const petitionCode = String(form.get("petitionCode") ?? "").trim();
@@ -99,27 +97,14 @@ export async function POST(request: Request) {
 
   const origName = basename(file.name || "upload").replace(/[^a-zA-Z0-9._-]+/g, "_");
   const buf = Buffer.from(await file.arrayBuffer());
-  const sourceLabel =
-    sourceLabelRaw.length > 0 ? sourceLabelRaw : isImage ? `photo:${origName}` : null;
+  const sourceLabel = sourceLabelRaw.length > 0 ? sourceLabelRaw : null;
 
-  let tmpPath: string;
-  if (isImage) {
-    try {
-      const xlsxBuf = await imageBufferToPetitionMailXlsx(buf.toString("base64"), mime);
-      tmpPath = join(tmpdir(), `vfm-ingest-${randomUUID()}.xlsx`);
-      await writeFile(tmpPath, xlsxBuf);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Image conversion failed";
-      return NextResponse.json({ error: msg }, { status: 502 });
-    }
-  } else {
-    const ext = extname(origName).toLowerCase();
-    if (![".csv", ".xlsx", ".xls"].includes(ext)) {
-      return NextResponse.json({ error: "File must end with .csv, .xlsx, or .xls" }, { status: 400 });
-    }
-    tmpPath = join(tmpdir(), `vfm-ingest-${randomUUID()}${ext}`);
-    await writeFile(tmpPath, buf);
+  const ext = extname(origName).toLowerCase();
+  if (![".csv", ".xlsx", ".xls"].includes(ext)) {
+    return NextResponse.json({ error: "File must end with .csv, .xlsx, or .xls" }, { status: 400 });
   }
+  const tmpPath = join(tmpdir(), `vfm-ingest-${randomUUID()}${ext}`);
+  await writeFile(tmpPath, buf);
 
   const chunkSizeRaw = Number.parseInt(process.env.VFM_CHUNK_SIZE ?? "500", 10);
   const chunkSize = Number.isFinite(chunkSizeRaw) && chunkSizeRaw > 0 ? chunkSizeRaw : 500;
@@ -144,7 +129,6 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({
       ok: true,
-      converted_from_image: isImage,
       result: {
         batch_id: result.batch_id,
         petition_code: result.petition_code,

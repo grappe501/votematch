@@ -78,6 +78,10 @@ export type ValidateDbResult = {
   migration_007_objects?: Record<string, boolean>;
   migration_007_ok?: boolean;
   migration_007_notes?: string[];
+  /** Objects from optional migration 008 (OCR image intake). */
+  migration_008_objects?: Record<string, boolean>;
+  migration_008_ok?: boolean;
+  migration_008_notes?: string[];
 };
 
 function requiredHeaderFieldsForMap(map: VoterHeaderMapFile): readonly string[] {
@@ -94,6 +98,21 @@ function physicalColumnHasMatch(cols: Set<string>, physical: string): boolean {
     if (c.toLowerCase() === lower) return true;
   }
   return false;
+}
+
+/** Case-insensitive column presence (Postgres preserves case on quoted identifiers). */
+function columnPresentCI(dbColumns: Set<string>, name: string): boolean {
+  return physicalColumnHasMatch(dbColumns, name);
+}
+
+/** True when env points at the standard public match-source view name (any identifier casing). */
+function isPublicVoterMatchSourceView(qualified: string): boolean {
+  try {
+    const { schema, table } = parseQualifiedTable(qualified);
+    return schema.toLowerCase() === "public" && table.toLowerCase() === "voter_match_source";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -405,6 +424,29 @@ export async function runValidateDb(mapPath: string): Promise<ValidateDbResult> 
               "Ward reporting: no ward / precinct / district columns detected on VFM_MATCH_SOURCE_TABLE. Matched rows will roll up to ward UNKNOWN until the match source exposes ward or district fields."
             );
           }
+
+          if (isPublicVoterMatchSourceView(ms)) {
+            // voter_id / first_name_norm / last_name_norm are already REQUIRED_MATCH_SOURCE above.
+            const extraContract = ["city_norm", "state", "zip5"] as const;
+            for (const c of extraContract) {
+              if (!columnPresentCI(mCols, c)) {
+                errors.push(
+                  `public.voter_match_source contract: required column "${c}" is missing (view must expose city_norm, state, zip5 for petition-mail matching).`
+                );
+                match_source_columns_ok = false;
+              }
+            }
+            if (!columnPresentCI(mCols, "ward") && !columnPresentCI(mCols, "ward_norm")) {
+              match_source_warnings.push(
+                "AJAX / WARD reporting: VFM_MATCH_SOURCE_TABLE is public.voter_match_source but neither ward nor ward_norm is present; ward rollups may show UNKNOWN until the view maps ward."
+              );
+            }
+            if (!columnPresentCI(mCols, "county") && !columnPresentCI(mCols, "county_norm")) {
+              match_source_warnings.push(
+                "Statewide / county petitions: public.voter_match_source has no county or county_norm; verify signer_county on imports and county reporting needs."
+              );
+            }
+          }
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -564,6 +606,36 @@ export async function runValidateDb(mapPath: string): Promise<ValidateDbResult> 
         "Migration 007_review_candidates_jurisdiction_nonvoters.sql is missing or incomplete. Review-candidate snapshots, nonvoter entries, and initiative_review_queue_80 will not be available until it is applied."
       );
     }
+    const migration_008_objects: Record<string, boolean> = {};
+    const migration_008_notes: string[] = [];
+    for (const t of ["ocr_image_batches", "ocr_image_files", "ocr_extracted_rows", "ocr_to_import_batches"] as const) {
+      const tr = await dbPool.query<{ e: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM information_schema.tables
+           WHERE table_schema = 'public' AND table_name = $1
+         ) AS e`,
+        [t]
+      );
+      migration_008_objects[`table:${t}`] = Boolean(tr.rows[0]?.e);
+      if (!migration_008_objects[`table:${t}`]) {
+        migration_008_notes.push(`Missing table public.${t} (apply migrations/008_ocr_image_intake.sql).`);
+      }
+    }
+    for (const v of ["ocr_batch_summary", "ocr_rows_needing_review"] as const) {
+      const vr = await dbPool.query<{ e: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM information_schema.views
+           WHERE table_schema = 'public' AND table_name = $1
+         ) AS e`,
+        [v]
+      );
+      migration_008_objects[`view:${v}`] = Boolean(vr.rows[0]?.e);
+      if (!migration_008_objects[`view:${v}`]) {
+        migration_008_notes.push(`Missing view public.${v} (apply migrations/008_ocr_image_intake.sql).`);
+      }
+    }
+    const migration_008_ok = Object.values(migration_008_objects).every(Boolean);
+
     if (migration_007_ok) {
       const cityInit = await dbPool.query<{ c: string }>(
         `SELECT COUNT(*)::text AS c FROM petitions p
@@ -610,6 +682,9 @@ export async function runValidateDb(mapPath: string): Promise<ValidateDbResult> 
       migration_007_objects,
       migration_007_ok,
       migration_007_notes: migration_007_notes.length ? migration_007_notes : undefined,
+      migration_008_objects,
+      migration_008_ok,
+      migration_008_notes: migration_008_notes.length ? migration_008_notes : undefined,
     };
   } finally {
     await pool?.end().catch(() => undefined);

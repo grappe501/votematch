@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { columnExists, viewExists } from "./review.js";
+import { columnExists, viewExists, runReviewProgress } from "./review.js";
 
 export type DashboardFilters = {
   org: string | null;
@@ -76,6 +76,13 @@ export type WardCountyRow = {
   avg_confidence_pct: number | null;
 };
 
+export type OcrDashboardRollup = {
+  ocr_batches_total: number;
+  ocr_rows_needing_review: number;
+  ocr_rows_confirmed: number;
+  ocr_rows_imported_links: number;
+};
+
 export type DashboardRollupResult = {
   generated_at: string;
   database_configured: boolean;
@@ -87,6 +94,8 @@ export type DashboardRollupResult = {
   ward_counts: WardCountyRow[];
   county_counts: WardCountyRow[];
   warnings: string[];
+  /** Present when migration 008 OCR tables exist. */
+  ocr_totals: OcrDashboardRollup | null;
 };
 
 function orgBatchWhere(paramIdx: number): string {
@@ -543,6 +552,67 @@ export async function fetchDashboardRollups(pool: Pool, filters: DashboardFilter
   }
 
   const county_counts: WardCountyRow[] = [];
+  let ocr_totals: OcrDashboardRollup | null = null;
+  try {
+    const ex = await pool.query<{ e: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = 'ocr_image_batches'
+       ) AS e`
+    );
+    if (ex.rows[0]?.e) {
+      const ocrBatches = await safeCount(
+        pool,
+        `SELECT COUNT(*)::text AS c FROM ocr_image_batches b WHERE ($1::text IS NULL OR b.project_key = $1)`,
+        p,
+        0,
+        () => {}
+      );
+      const need = await safeCount(
+        pool,
+        `SELECT COUNT(*)::text AS c
+         FROM ocr_extracted_rows r
+         INNER JOIN ocr_image_batches b ON b.id = r.ocr_image_batch_id
+         WHERE ($1::text IS NULL OR b.project_key = $1)
+           AND r.needs_human_review = true
+           AND r.human_review_status IN ('NEEDS_REVIEW','EDITED')`,
+        p,
+        0,
+        () => {}
+      );
+      const conf = await safeCount(
+        pool,
+        `SELECT COUNT(*)::text AS c
+         FROM ocr_extracted_rows r
+         INNER JOIN ocr_image_batches b ON b.id = r.ocr_image_batch_id
+         WHERE ($1::text IS NULL OR b.project_key = $1)
+           AND r.human_review_status = 'CONFIRMED'`,
+        p,
+        0,
+        () => {}
+      );
+      const imp = await safeCount(
+        pool,
+        `SELECT COUNT(*)::text AS c
+         FROM ocr_to_import_batches t
+         INNER JOIN ocr_image_batches b ON b.id = t.ocr_image_batch_id
+         WHERE ($1::text IS NULL OR b.project_key = $1)
+           AND t.import_batch_id IS NOT NULL`,
+        p,
+        0,
+        () => {}
+      );
+      ocr_totals = {
+        ocr_batches_total: ocrBatches,
+        ocr_rows_needing_review: need,
+        ocr_rows_confirmed: conf,
+        ocr_rows_imported_links: imp,
+      };
+    }
+  } catch {
+    warnings.push("Could not load OCR aggregate stats (check migration 008).");
+  }
+
   if (hasCountyView) {
     try {
       const c = await pool.query<{ petition_code: string; county: string; v: string; a: string | null }>(
@@ -581,6 +651,7 @@ export async function fetchDashboardRollups(pool: Pool, filters: DashboardFilter
     ward_counts,
     county_counts,
     warnings,
+    ocr_totals,
   };
 }
 
@@ -613,11 +684,23 @@ export type BatchSnapshot = {
   needs_review: number;
   out_of_jurisdiction: number;
   duplicates: number;
+  nonvoters: number;
   confidence_distribution: ConfidenceDistribution;
   problem_counts: ProblemCountRow[];
   ward_counts: WardCountyRow[];
   county_counts: WardCountyRow[];
   warnings: string[];
+  /** Present when reporting view exists; null if migrations not applied. */
+  review_progress: {
+    total_rows: number;
+    slam_dunk_matched: number;
+    needs_review_total: number;
+    unresolved_review_rows: number;
+    manually_approved: number;
+    rejected: number;
+    needs_more_info: number;
+    percent_complete: number;
+  } | null;
 };
 
 export async function fetchBatchReportSnapshot(pool: Pool, batchId: string): Promise<BatchSnapshot | null> {
@@ -713,6 +796,25 @@ export async function fetchBatchReportSnapshot(pool: Pool, batchId: string): Pro
       0,
       () => {}
     );
+  }
+
+  const hasNonvoterTable = await tableExists(pool, "initiative_nonvoter_entries");
+  let nonvoters = 0;
+  if (hasNonvoterTable) {
+    nonvoters = await safeCount(
+      pool,
+      `SELECT COUNT(*)::text AS c FROM initiative_nonvoter_entries e WHERE e.import_batch_id = $1::uuid`,
+      [batchId],
+      0,
+      () => {}
+    );
+  }
+
+  let review_progress: BatchSnapshot["review_progress"] = null;
+  try {
+    review_progress = await runReviewProgress(pool, batchId);
+  } catch {
+    warnings.push("Could not compute review progress (apply migrations 005+ or check batch_signature_report_rows).");
   }
 
   const confidence_distribution: ConfidenceDistribution = {
@@ -847,11 +949,13 @@ export async function fetchBatchReportSnapshot(pool: Pool, batchId: string): Pro
     needs_review,
     out_of_jurisdiction,
     duplicates,
+    nonvoters,
     confidence_distribution,
     problem_counts,
     ward_counts,
     county_counts,
     warnings,
+    review_progress,
   };
 }
 

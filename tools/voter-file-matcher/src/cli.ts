@@ -14,6 +14,11 @@ import type { ParseFileOptions } from "./parseFile.js";
 import { parseVoterBuffer } from "./parseFile.js";
 import { runValidateConfig, runValidateDb } from "./validation.js";
 import { discoverVoterSchema } from "./schemaDiscovery.js";
+import {
+  buildMatchSourceSuggestSummary,
+  discoverLikelyVoterTables,
+  inspectTableColumnsMetadata,
+} from "./voterSourceDiscovery.js";
 import { buildMatchSourcePlan } from "./matchSourcePlanner.js";
 import {
   assertSafeMatchSourceViewSql,
@@ -150,8 +155,14 @@ type Opts = {
   matchReadiness?: boolean;
   candidateProbe?: boolean;
   discoverVoterSchema?: boolean;
+  discoverVoterTables?: boolean;
+  inspectTableColumns?: boolean;
+  /** Qualified table for --inspect-table-columns (e.g. public."VoterRecord"). */
+  table?: string;
+  suggestMatchSource?: boolean;
   planMatchSource?: boolean;
   emitMatchSourceSql?: boolean;
+  writeMatchSourceSql?: boolean;
   applyMatchSourceSql?: boolean;
   canonicalTable?: string;
   includeRelated?: boolean;
@@ -826,8 +837,28 @@ program
   .option("--match-readiness", "Preflight file + DB match-source checks (no writes)", false)
   .option("--candidate-probe", "Sample rows: run match queries, aggregate counts only (no writes)", false)
   .option("--discover-voter-schema", "information_schema only: classify canonical (+ optional related) columns (no row data)", false)
+  .option(
+    "--discover-voter-tables",
+    "information_schema only: list likely voter-related public tables/views (no row data)",
+    false
+  )
+  .option(
+    "--inspect-table-columns",
+    "information_schema only: print column types + inferred logical meaning for --table (no row data)",
+    false
+  )
+  .option(
+    "--table <q>",
+    'Qualified table or view name, e.g. public."VoterRecord" (required with --inspect-table-columns)'
+  )
+  .option(
+    "--suggest-match-source",
+    "Schema-only: suggest standard match-source mappings; writes match-source-plan.json; prints safe JSON summary",
+    false
+  )
   .option("--plan-match-source", "Write draft match-source mapping JSON from schema discovery (no DB writes except reads)", false)
   .option("--emit-match-source-sql", "Emit CREATE OR REPLACE VIEW SQL from plan file (does not execute)", false)
+  .option("--write-match-source-sql", "Alias for --emit-match-source-sql (does not execute)", false)
   .option("--apply-match-source-sql", "Execute reviewed CREATE VIEW SQL (requires --confirm-apply-match-source)", false)
   .option("--confirm-apply-match-source", "Acknowledge explicit apply of --sql view definition", false)
   .option("--canonical-table <q>", 'Qualified canonical table (default: VFM_CANONICAL_TABLE)')
@@ -1313,6 +1344,71 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (opts.discoverVoterTables === true) {
+    const pool = createPool();
+    try {
+      const tables = await discoverLikelyVoterTables(pool);
+      console.log(JSON.stringify({ discover_voter_tables: true, count: tables.length, tables }, null, 2));
+    } finally {
+      await pool.end().catch(() => undefined);
+    }
+    return;
+  }
+
+  if (opts.inspectTableColumns === true) {
+    const t = opts.table?.trim();
+    if (!t) {
+      throw new Error('Pass --table with --inspect-table-columns, e.g. --table public."VoterRecord".');
+    }
+    const pool = createPool();
+    try {
+      const columns = await inspectTableColumnsMetadata(pool, t);
+      console.log(JSON.stringify({ inspect_table_columns: true, table: t, column_count: columns.length, columns }, null, 2));
+    } finally {
+      await pool.end().catch(() => undefined);
+    }
+    return;
+  }
+
+  if (opts.suggestMatchSource === true) {
+    const canonical = opts.canonicalTable?.trim() || process.env.VFM_CANONICAL_TABLE?.trim();
+    if (!canonical) {
+      throw new Error("Pass --canonical-table or set VFM_CANONICAL_TABLE for --suggest-match-source.");
+    }
+    const targetQ = (opts.target ?? "public.voter_match_source").trim();
+    const outRel = opts.out?.trim() || join("tools", "voter-file-matcher", "reports", "match-source-plan.json");
+    const outPath = resolve(process.cwd(), outRel);
+    await mkdir(dirname(outPath), { recursive: true });
+    const pool = createPool();
+    try {
+      const plan = await buildMatchSourcePlan(pool, {
+        canonicalQualified: canonical,
+        targetMatchSource: targetQ,
+        includeRelated: opts.includeRelated === true,
+      });
+      await writeFile(outPath, JSON.stringify(plan, null, 2), "utf8");
+      const column_summary = buildMatchSourceSuggestSummary(plan);
+      console.log(
+        JSON.stringify(
+          {
+            suggest_match_source: true,
+            canonical_table: canonical,
+            target: targetQ,
+            written: outPath,
+            missing_or_low_confidence: plan.missing_or_low_confidence,
+            warnings: plan.warnings,
+            column_summary,
+          },
+          null,
+          2
+        )
+      );
+    } finally {
+      await pool.end().catch(() => undefined);
+    }
+    return;
+  }
+
   if (opts.planMatchSource === true) {
     const canonical = opts.canonicalTable?.trim() || process.env.VFM_CANONICAL_TABLE?.trim();
     if (!canonical) {
@@ -1352,7 +1448,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (opts.emitMatchSourceSql === true) {
+  if (opts.emitMatchSourceSql === true || opts.writeMatchSourceSql === true) {
     const planRel = opts.plan?.trim() || join("tools", "voter-file-matcher", "reports", "match-source-plan.json");
     const planPath = resolve(process.cwd(), planRel);
     const targetQ = (opts.target ?? "public.voter_match_source").trim();
@@ -1364,7 +1460,17 @@ async function main(): Promise<void> {
     await mkdir(dirname(outPath), { recursive: true });
     await writeFile(outPath, sql, "utf8");
     console.log(
-      JSON.stringify({ emit_match_source_sql: true, plan: planPath, written: outPath, target: targetQ }, null, 2)
+      JSON.stringify(
+        {
+          emit_match_source_sql: true,
+          write_match_source_sql: opts.writeMatchSourceSql === true,
+          plan: planPath,
+          written: outPath,
+          target: targetQ,
+        },
+        null,
+        2
+      )
     );
     return;
   }

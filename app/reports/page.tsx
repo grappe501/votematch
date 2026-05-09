@@ -59,6 +59,27 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         </p>
       </div>
 
+      <div className="reports-hub-grid">
+        <Link className="card reports-hub-card" href="/reports/batches">
+          <h2 style={{ marginTop: 0 }}>All batches</h2>
+          <p className="muted-p" style={{ marginBottom: 0 }}>
+            Filter by petition, status, or “needs review” and open batch-level aggregates.
+          </p>
+        </Link>
+        <Link className="card reports-hub-card" href="/reports/initiatives">
+          <h2 style={{ marginTop: 0 }}>Initiatives</h2>
+          <p className="muted-p" style={{ marginBottom: 0 }}>
+            Per-petition rollups, ward/county breakdowns when configured, and links to recent imports.
+          </p>
+        </Link>
+        <Link className="card reports-hub-card" href="/review">
+          <h2 style={{ marginTop: 0 }}>Operator review</h2>
+          <p className="muted-p" style={{ marginBottom: 0 }}>
+            Protected queue for signer-level review (requires token in production).
+          </p>
+        </Link>
+      </div>
+
       {error && (
         <div className="banner danger">
           {error} For local development, point <code>VFM_DOTENV_PATH</code> at a file that defines{" "}
@@ -110,10 +131,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             ))}
           </div>
 
-          {t && (
+          {t && data && (
             <div className="metric-grid">
               <MetricCard label="Total import rows" value={fmtInt(t.total_import_rows)} hint="Rows staged from files." />
               <MetricCard label="Matched (import)" value={fmtInt(t.matched_total)} />
+              <MetricCard label="Slam-dunk (100% bucket)" value={fmtInt(data.confidence_distribution.pct_100)} hint="From confidence distribution." />
               <MetricCard label="Not matched" value={fmtInt(t.not_found_total)} hint="NOT_FOUND status on import rows." />
               <MetricCard label="Under 80% confidence" value={fmtInt(t.under_80_total)} />
               <MetricCard label="Needs review (queue)" value={fmtInt(t.needs_review_total)} />
@@ -125,6 +147,21 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
               <MetricCard label="Errors" value={fmtInt(t.error_total)} />
               <MetricCard label="Import batches" value={fmtInt(t.total_batches)} />
               <MetricCard label="Avg confidence (import)" value={fmtPct(t.avg_confidence_pct)} />
+            </div>
+          )}
+
+          {data.ocr_totals && (
+            <div className="card">
+              <h2>OCR image intake (aggregate)</h2>
+              <p className="muted-p" style={{ marginBottom: "0.75rem" }}>
+                Counts from migration 008 tables only—no signer-level OCR data on this page.
+              </p>
+              <div className="metric-grid">
+                <MetricCard label="OCR batches" value={fmtInt(data.ocr_totals.ocr_batches_total)} />
+                <MetricCard label="OCR rows needing review" value={fmtInt(data.ocr_totals.ocr_rows_needing_review)} />
+                <MetricCard label="OCR rows confirmed" value={fmtInt(data.ocr_totals.ocr_rows_confirmed)} />
+                <MetricCard label="OCR → import links" value={fmtInt(data.ocr_totals.ocr_rows_imported_links)} />
+              </div>
             </div>
           )}
 
@@ -164,7 +201,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                   avg: fmtPct(r.avg_confidence_pct),
                   target: progress,
                   link: (
-                    <Link href={`/initiatives/${encodeURIComponent(r.petition_code)}`}>Detail</Link>
+                    <Link href={`/reports/initiatives/${encodeURIComponent(r.petition_code)}`}>Detail</Link>
                   ),
                 };
               })}
@@ -193,7 +230,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
               empty="No batches for this filter."
               rows={data.recent_batches.map((b) => ({
                 id: (
-                  <Link href={`/reports/${encodeURIComponent(b.batch_id)}`} title={b.batch_id} style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem" }}>
+                  <Link href={`/reports/batches/${encodeURIComponent(b.batch_id)}`} title={b.batch_id} style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem" }}>
                     {shortBatchId(b.batch_id)}
                   </Link>
                 ),
@@ -210,7 +247,10 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                 st: <StatusBadge status={b.status} />,
                 created: <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>{b.created_at}</span>,
                 link: (
-                  <Link href={`/reports/${encodeURIComponent(b.batch_id)}`}>Detail</Link>
+                  <span style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                    <Link href={`/reports/batches/${encodeURIComponent(b.batch_id)}`}>Detail</Link>
+                    <Link href={`/review/${encodeURIComponent(b.batch_id)}`}>Review</Link>
+                  </span>
                 ),
               }))}
             />

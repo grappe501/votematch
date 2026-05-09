@@ -11,8 +11,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="brand-text">VoteMatch</span>
           </Link>
           <nav className="site-nav" aria-label="Main">
-            <Link href="/">Import</Link>
+            <Link href="/">Home</Link>
             <Link href="/reports">Reports</Link>
+            <Link href="/review">Review</Link>
           </nav>
         </div>
       </header>

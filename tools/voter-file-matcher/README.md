@@ -72,74 +72,81 @@ npm run voter-match -- --match-readiness --file "./incoming/your-petition-sheet.
 npm run voter-match -- --candidate-probe --file "./incoming/your-petition-sheet.xlsx" --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json --limit 25
 ```
 
-## Creating the voter match source view
+## Wiring the real voter source
 
-This workflow uses **information_schema only** for discovery and planning (no voter row reads). The plan JSON and emitted SQL are **drafts**; review before any apply. **`--apply-match-source-sql`** is the only command that writes DDL, and it requires **`--confirm-apply-match-source`**. Permanent **`voter_petition_signatures`** rows are unchanged by this tooling except through normal imports after you point **`VFM_MATCH_SOURCE_TABLE`** at the view.
+This workflow uses **information_schema only** for discovery, column inspection, and planning (no voter row reads). The plan JSON and emitted SQL are **drafts**; review before any apply. **`--apply-match-source-sql`** is the only command that writes DDL, and it requires **`--confirm-apply-match-source`**. The safety gate allows a single **`CREATE OR REPLACE VIEW`** for the configured **`--target`** (default **`public.voter_match_source`**) and rejects **`DROP`**, **`DELETE`**, **`UPDATE`**, **`INSERT`**, **`TRUNCATE`**, **`ALTER`**, and other destructive patterns.
 
-**Step 1:**
-
-```powershell
-npm run voter-match -- --discover-voter-schema
-```
-
-**Step 2:**
+**A. Find likely voter tables:**
 
 ```powershell
-npm run voter-match -- --plan-match-source
+npm run voter-match -- --discover-voter-tables
 ```
 
-**Step 3:**
+**B. Inspect likely table:**
 
-Open:
+```powershell
+npm run voter-match -- --inspect-table-columns --table public."VoterRecord"
+```
+
+**C. Set canonical table in `.env`:**
+
+`VFM_CANONICAL_TABLE=public."VoterRecord"`
+
+**D. Suggest match source:**
+
+```powershell
+npm run voter-match -- --suggest-match-source --canonical-table public."VoterRecord"
+```
+
+**E. Review:**
 
 `tools/voter-file-matcher/reports/match-source-plan.json`
 
-Review and edit mappings if needed.
-
-**Step 4:**
+**F. Write SQL:**
 
 ```powershell
-npm run voter-match -- --emit-match-source-sql
+npm run voter-match -- --write-match-source-sql --plan tools/voter-file-matcher/reports/match-source-plan.json --out tools/voter-file-matcher/reports/create-voter-match-source.sql
 ```
 
-**Step 5:**
-
-Open:
+**G. Review SQL:**
 
 `tools/voter-file-matcher/reports/create-voter-match-source.sql`
 
-Review SQL carefully.
-
-**Step 6:**
+**H. Apply SQL:**
 
 ```powershell
 npm run voter-match -- --apply-match-source-sql --sql tools/voter-file-matcher/reports/create-voter-match-source.sql --confirm-apply-match-source
 ```
 
-**Step 7:**
-
-Set:
+**I. Set:**
 
 `VFM_MATCH_SOURCE_TABLE=public.voter_match_source`
 
-**Step 8:**
+**J. Validate:**
 
 ```powershell
-npm run voter-match -- --inspect-voter-source
+npm run voter-match -- --validate-config --validate-db --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json
 ```
 
-**Step 9:**
+**AJAX-specific next commands** (after the match source validates):
 
 ```powershell
 npm run voter-match -- --match-readiness --file "./tools/voter-file-matcher/incoming/Petition Mail List Share 1 (1).xlsx" --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json
+
+npm run voter-match -- --candidate-probe --file "./tools/voter-file-matcher/incoming/Petition Mail List Share 1 (1).xlsx" --profile ./tools/voter-file-matcher/configs/petition-mail-list-share-v1.json --limit 25
 ```
+
+Then run **`--prepare-import-plan`** / guarded import flow as needed.
+
+**Alternate discovery** (single canonical table classification): **`--discover-voter-schema`**. **Plan without suggest JSON:** **`--plan-match-source`** (same plan file shape as **`--suggest-match-source`**). **Emit SQL:** **`--emit-match-source-sql`** or **`--write-match-source-sql`**.
 
 Notes:
 
 - Discovery reads **schema metadata only**, never voter rows.
 - The plan is a **draft**; joins to related tables are never auto-generated.
-- SQL must be **human-reviewed** before apply; the tool only allows a single **`CREATE OR REPLACE VIEW`** for the configured target and rejects destructive keywords.
+- SQL must be **human-reviewed** before apply.
 - Applying creates or replaces **only** the match-source view definition.
+- **`--env-status`** prints **`DATABASE_URL_configured`** and resolved paths only (never the URL or secrets).
 - **Do not commit** real spreadsheets, generated voter exports, or production-only plan/SQL artifacts if your policy forbids it (`tools/voter-file-matcher/reports/` is gitignored by default).
 
 Optional flags:
@@ -367,6 +374,12 @@ Then optionally apply **migration 005** (ward/precinct/district columns on signa
 psql $env:DATABASE_URL -f tools/voter-file-matcher/migrations/005_reporting_review_views.sql
 ```
 
+For **Next.js OCR image intake** (`/api/ingest-image`), apply **`migrations/008_ocr_image_intake.sql`** after prior migrations (001–007 as needed). `--validate-db` reports `migration_008_*` when tables/views are missing.
+
+```powershell
+psql $env:DATABASE_URL -f tools/voter-file-matcher/migrations/008_ocr_image_intake.sql
+```
+
 ### 3. Validate config
 
 ```powershell
@@ -375,7 +388,7 @@ npm run voter-match -- --validate-config --map ./tools/voter-file-matcher/config
 
 ### 4. Validate DB
 
-Checks migration **001** tables, migration **002** review/audit objects and views, **`VFM_CANONICAL_TABLE`**, map columns on the canonical table, migration **004** `import_plans` when relevant (`plan_migration_notes` when it does not), and migration **005** reporting views / `voter_ward` column (non-fatal notes when optional objects are missing). When **`VFM_MATCH_SOURCE_TABLE`** is set, warns if no ward/precinct/district-like columns are present (ward rollups fall back to UNKNOWN).
+Checks migration **001** tables, migration **002** review/audit objects and views, **`VFM_CANONICAL_TABLE`**, map columns on the canonical table, migration **004** `import_plans` when relevant (`plan_migration_notes` when it does not), migration **005** reporting views / `voter_ward` column, migrations **006** / **007** objects when present, and migration **008** OCR tables/views (`migration_008_notes` when missing). When **`VFM_MATCH_SOURCE_TABLE`** is set, warns if no ward/precinct/district-like columns are present (ward rollups fall back to UNKNOWN).
 
 ```powershell
 npm run voter-match -- --validate-config --validate-db --map ./tools/voter-file-matcher/configs/sos-voter-map.json

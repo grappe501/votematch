@@ -400,3 +400,6 @@ export type ImportPlanJson = {
     existed_in_database: boolean;
   };
 };
+
+/** OCR vision extraction (draft rows; separate from voter match confidence). */
+export type { OcrExtractedRowJson, OcrPetitionExtractionResult, PetitionOcrContext } from "./ocrTypes.js";

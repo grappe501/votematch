@@ -274,7 +274,7 @@ function signerFullNameDisplay(normalized: NormalizedRowJson): string | null {
   return joined ? toTitleCaseFromLower(joined) : null;
 }
 
-async function getLatestMatchForRow(
+export async function getLatestMatchForRow(
   client: PoolClient,
   batchId: string,
   rowNumber: number

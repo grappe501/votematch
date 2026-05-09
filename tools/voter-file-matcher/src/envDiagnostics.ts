@@ -7,15 +7,19 @@ export function printEnvStatus(): void {
   loadVfmEnv();
   const rawDot = process.env.VFM_DOTENV_PATH?.trim() ?? "";
   const vfmDotenvPath = rawDot.length > 0 ? resolve(process.cwd(), rawDot) : null;
+  const rawHeaderMap = process.env.VFM_HEADER_MAP_PATH?.trim() ?? "";
+  const vfmHeaderMapPath = rawHeaderMap.length > 0 ? resolve(process.cwd(), rawHeaderMap) : null;
+  const rawProfile = process.env.VFM_SOURCE_PROFILE_PATH?.trim() ?? "";
+  const vfmSourceProfilePath = rawProfile.length > 0 ? resolve(process.cwd(), rawProfile) : null;
   console.log(
     JSON.stringify(
       {
         DATABASE_URL_configured: Boolean(process.env.DATABASE_URL?.trim()),
         VFM_DOTENV_PATH: vfmDotenvPath,
-        VFM_PROJECT_KEY: process.env.VFM_PROJECT_KEY?.trim() ?? null,
+        VFM_HEADER_MAP_PATH: vfmHeaderMapPath,
         VFM_CANONICAL_TABLE: process.env.VFM_CANONICAL_TABLE?.trim() ?? null,
         VFM_MATCH_SOURCE_TABLE: process.env.VFM_MATCH_SOURCE_TABLE?.trim() ?? null,
-        VFM_SOURCE_PROFILE_PATH: process.env.VFM_SOURCE_PROFILE_PATH?.trim() ?? null,
+        VFM_SOURCE_PROFILE_PATH: vfmSourceProfilePath,
       },
       null,
       2

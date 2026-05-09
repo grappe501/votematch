@@ -11,6 +11,9 @@ incoming/
 spreadsheets/
 *.xlsx
 !tools/voter-file-matcher/fixtures/*.xlsx
+tools/voter-file-matcher/ocr-incoming/*
+!tools/voter-file-matcher/ocr-incoming/README.md
+tools/voter-file-matcher/ocr-output/
 tools/voter-file-matcher/reports/
 tools/voter-file-matcher/incoming/
 !tools/voter-file-matcher/incoming/README.md

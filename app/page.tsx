@@ -6,9 +6,10 @@ export default function HomePage() {
       <div className="page-hero">
         <h1>Import petition sheets</h1>
         <p>
-          Upload a <strong>Petition Mail List Share</strong> spreadsheet, or a clear photo of a handwritten /
-          printed sheet. Photos are converted on the server with OpenAI vision (requires{" "}
-          <code>OPENAI_API_KEY</code>), then run through the same matching pipeline as the CLI.
+          Upload a <strong>Petition Mail List Share</strong> spreadsheet for immediate matching, or a <strong>JPEG / PNG</strong>{" "}
+          scan for <strong>OCR intake</strong> (OpenAI vision on the server). OCR produces draft rows that must be reviewed and
+          confirmed before they enter the same import/match pipeline as CSV/XLSX—raw OCR never creates permanent signatures by
+          itself.
         </p>
       </div>
       <div className="banner">
